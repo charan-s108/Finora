@@ -1,0 +1,74 @@
+# =============================================================================
+# Finora — .gitignore
+# =============================================================================
+
+# ── Environment (never commit — contains real API keys) ───────────────────────
+backend/.env
+frontend/.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# ── Data & Models (large — regenerate via scripts) ───────────────────────────
+backend/data/hf_cache/
+backend/data/qdrant/
+backend/data/bm25_index/
+# backend/data/universe/stocks.json is committed (105KB, baked into Docker)
+*.bin
+*.safetensors
+*.onnx
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+*.tsbuildinfo
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.docker/
+
+# ── Eval outputs ──────────────────────────────────────────────────────────────
+backend/data/eval_results/*.json
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.p12
+
+# ── Claude Code (internal architecture spec — not for public repo) ─────────────
+CLAUDE.md
+
+# ── Test outputs ──────────────────────────────────────────────────────────────
+tests/stress_report.txt
+tests/backend/stress/__pycache__/
+tests/backend/unit/__pycache__/
+tests/backend/integration/__pycache__/

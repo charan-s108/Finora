@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Light mode ─────────────────────────────── */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 7%;
+    --card: 0 0% 99%;
+    --card-foreground: 0 0% 7%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 7%;
+    --primary: 261 67% 42%;          /* #5523b2 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 250 100% 95%;       /* #eae6ff lavender-1 */
+    --secondary-foreground: 261 67% 30%;
+    --muted: 240 11% 96%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 250 100% 95%;
+    --accent-foreground: 261 67% 42%;
+    --border: 240 11% 91%;           /* #e5e5ea */
+    --input: 240 11% 91%;
+    --ring: 261 67% 42%;
+    --radius: 0.75rem;
+    /* Brand extras */
+    --brand-purple: 261 67% 42%;
+    --brand-purple-bright: 262 88% 59%;
+    --brand-purple-dark: 259 80% 24%;
+    --brand-green: 115 72% 75%;
+  }
+
+  /* ── Dark mode ──────────────────────────────── */
+  .dark {
+    --background: 0 0% 7%;           /* #111111 */
+    --foreground: 0 0% 100%;
+    --card: 259 57% 14%;             /* dark purple card */
+    --card-foreground: 0 0% 100%;
+    --popover: 259 57% 11%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 262 88% 59%;          /* #7e3cf3 bright in dark */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 259 80% 24%;        /* #2b0c6e */
+    --secondary-foreground: 0 0% 100%;
+    --muted: 259 57% 14%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 259 80% 24%;
+    --accent-foreground: 0 0% 100%;
+    --border: 259 60% 22%;
+    --input: 259 60% 22%;
+    --ring: 262 88% 59%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading), "Plus Jakarta Sans", sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
+}
+
+@layer utilities {
+  .text-positive { @apply text-emerald-500 dark:text-emerald-400; }
+  .text-negative { @apply text-rose-500 dark:text-rose-400; }
+
+  .card-glass {
+    @apply bg-card/80 backdrop-blur-md border border-border rounded-2xl;
+  }
+
+  .gradient-purple {
+    background: linear-gradient(135deg, hsl(var(--brand-purple)) 0%, hsl(var(--brand-purple-bright)) 100%);
+  }
+
+  .gradient-hero-light {
+    background:
+      radial-gradient(ellipse 90% 70% at 50% -5%, #ddd6fe 0%, #ede9fe 30%, #ffffff 65%),
+      linear-gradient(180deg, #f5f3ff 0%, #ffffff 100%);
+  }
+
+  .gradient-hero-dark {
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, #2b0c6e 0%, #111111 70%);
+  }
+
+  /* Light mode — richer card/section backgrounds */
+  .section-alt-light {
+    background: linear-gradient(180deg, #faf9ff 0%, #f3f0ff 50%, #ffffff 100%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, hsl(var(--brand-purple)) 0%, hsl(var(--brand-purple-bright)) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* TradingView widget reset — prevent bleed */
+  .tv-widget-wrapper iframe {
+    border-radius: 0;
+  }
+}
+
+/* Ticker tape scroll — defined here so inline style animation works */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.ticker-scroll {
+  animation: ticker-scroll var(--ticker-duration, 60s) linear infinite;
+  will-change: transform;
+}
+.ticker-scroll.paused {
+  animation-play-state: paused;
+}

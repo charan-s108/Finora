@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Circular background -->
+  <circle cx="16" cy="16" r="16" fill="#6366f1"/>
+  <!-- Gemini-style 4-pointed star (FinoraIcon paths, scaled to 32×32 from 24×24) -->
+  <path
+    d="M16 2.667C16 2.667 17.999 10 24 16C17.999 22 16 29.333 16 29.333C16 29.333 14.001 22 8 16C14.001 10 16 2.667 16 2.667Z"
+    fill="white"
+    opacity="1"
+  />
+  <path
+    d="M2.667 16C2.667 16 10 14.001 16 8C22 14.001 29.333 16 29.333 16C29.333 16 22 17.999 16 24C10 17.999 2.667 16 2.667 16Z"
+    fill="white"
+    opacity="0.6"
+  />
+</svg>
