@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.middleware.rate_limit import limiter
+from graph.nodes.response_cache import cache_key as _resp_cache_key, get_cached as _resp_get_cached, is_volatile_query as _resp_is_volatile
 from rag.ingestion.universe import universe
 
 log = structlog.get_logger()
@@ -78,7 +79,9 @@ def _parse_chart_timeframe(query: str) -> tuple[str, str, str]:
         return (f"{y}y", interval, f"{y}Y")
 
     # Named timeframes
-    if any(x in q for x in ("intraday", "today", "1d", "1 day", "one day")):
+    if any(x in q for x in ("intraday", "today", "1d", "1 day", "one day",
+                             "suddenly", "crashing", "crashed", "surging", "surged",
+                             "dropped", "spiked", "right now", "happening now")):
         return ("1d", "5m", "1D")
     if any(x in q for x in ("this week", "1w", "1 week", "one week", "past week", "7 day")):
         return ("5d", "30m", "1W")
@@ -141,6 +144,7 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
         "news_chunks": [],
         "historical_chunks": [],
         "fundamental_data": None,
+        "sector_context": None,
         "fused_context": "",
         "response": "",
         "citations": [],
@@ -150,10 +154,30 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
         "retrieval_scores": {},
     }
 
-    config = {"configurable": {"thread_id": req.session_id}}
+    # Per-request unique thread_id — prevents MemorySaver from accumulating
+    # operator.add fields (news_chunks, historical_chunks) across invocations.
+    # Conversation history is passed explicitly in initial_state, so nothing is lost.
+    trace_id = initial_state["trace_id"]
+    config = {"configurable": {"thread_id": f"{req.session_id}:{req.ticker}:{trace_id}"}}
 
     try:
         yield _sse({"type": "status", "message": "Analyzing query..."})
+
+        # Early cache bypass — skip entire graph if response is cached
+        # Uses TTL-only check (no price data yet); price-based invalidation runs in response_node
+        if req.ticker and not _resp_is_volatile(req.query):
+            _key = _resp_cache_key(req.ticker, req.query, req.user_mode)
+            _cached_text = _resp_get_cached(_key, current_pct=None)
+            if _cached_text:
+                log.info("early_cache_hit", ticker=req.ticker, session=req.session_id)
+                yield _sse({"type": "guardrail", "status": "allowed"})
+                yield _sse({"type": "intent", "intents": []})
+                sentences = _cached_text.split(". ")
+                for i, sent in enumerate(sentences):
+                    content = sent + (". " if i < len(sentences) - 1 else "")
+                    yield _sse({"type": "token", "content": content})
+                yield _sse({"type": "done", "trace_id": trace_id, "confidence": 0.0, "cached": True})
+                return
 
         # Stream graph events node-by-node
         async for event in graph.astream(initial_state, config=config):
@@ -273,11 +297,8 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
 
         confidence = final_vals.get("confidence_score", 0.0)
         trace_id = final_vals.get("trace_id", req.session_id[:8])
-        langsmith_project = os.getenv("LANGCHAIN_PROJECT", "finora-prod")
-        langsmith_url = (
-            f"https://smith.langchain.com/projects/{langsmith_project}"
-            if os.getenv("LANGCHAIN_API_KEY") else None
-        )
+        from observability.langsmith_url import get_project_url
+        langsmith_url = get_project_url()
         yield _sse({
             "type": "done",
             "trace_id": trace_id,

@@ -48,6 +48,7 @@ async def parallel_retrieval_node(state: FiNoraState) -> dict:
         "news_chunks": [],
         "historical_chunks": [],
         "fundamental_data": None,
+        "sector_context": None,
         "retrieval_scores": {},
     }
     for r in results:

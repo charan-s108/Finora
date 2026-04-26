@@ -29,6 +29,7 @@ class FiNoraState(TypedDict):
     news_chunks: Annotated[list[dict], operator.add]
     historical_chunks: Annotated[list[dict], operator.add]
     fundamental_data: dict | None
+    sector_context: dict | None  # sector ETF performance + similar stocks
 
     # Generation
     fused_context: str

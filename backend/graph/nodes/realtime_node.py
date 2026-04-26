@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import structlog
 
@@ -9,6 +10,46 @@ from graph.state import FiNoraState
 from rag.yahoo_client import fetch_ohlcv, fetch_quote
 
 log = structlog.get_logger()
+
+_PATTERNS_CACHE: dict[str, tuple[list[dict], float]] = {}
+_PATTERNS_TTL = 300.0  # 5 minutes
+
+
+def _fetch_historical_patterns(ticker: str) -> list[dict]:
+    """
+    Fetch historical context from Qdrant — same query the dashboard uses —
+    so chat has historical data regardless of intent routing.
+    Returns up to 2 pattern chunks, empty list on any failure. Cached 5 min.
+    """
+    cached = _PATTERNS_CACHE.get(ticker)
+    if cached and (time.monotonic() - cached[1]) < _PATTERNS_TTL:
+        log.debug("historical_patterns_cache_hit", ticker=ticker)
+        return cached[0]
+
+    try:
+        from rag.retrieval.hybrid import hybrid_search
+        from rag.ingestion.collections import collection_name
+        chunks = hybrid_search(
+            query=f"{ticker} historical price patterns earnings volatility",
+            ticker=ticker,
+            collection=collection_name("historical"),
+            limit=2,
+            allow_global_fallback=False,
+        )
+        results = []
+        for ch in chunks:
+            meta = ch.metadata if hasattr(ch, "metadata") else {}
+            results.append({
+                "text": ch.text if hasattr(ch, "text") else str(ch),
+                "event_type": meta.get("event_type", "price_event"),
+                "date_range": meta.get("date_range", meta.get("start_date", "")),
+                "return_pct": meta.get("return_pct"),
+            })
+        _PATTERNS_CACHE[ticker] = (results, time.monotonic())
+        return results
+    except Exception as exc:
+        log.debug("historical_patterns_fetch_skipped", ticker=ticker, error=str(exc))
+        return []
 
 
 def _fetch_realtime(ticker: str) -> dict:
@@ -56,9 +97,22 @@ async def realtime_node(state: FiNoraState) -> dict:
     if not ticker:
         return {"realtime_context": None}
 
-    # Always fetch realtime data — charts need it regardless of intent
     loop = asyncio.get_running_loop()
-    data = await loop.run_in_executor(None, _fetch_realtime, yf_ticker)
+
+    # Fetch realtime + historical patterns concurrently
+    realtime_task = loop.run_in_executor(None, _fetch_realtime, yf_ticker)
+    historical_task = loop.run_in_executor(None, _fetch_historical_patterns, ticker)
+
+    data, historical_patterns = await asyncio.gather(realtime_task, historical_task)
+
     data["ticker"] = ticker
-    log.info("realtime_node_done", ticker=ticker, yf_ticker=yf_ticker, price=data.get("price"))
+    # Always inject historical patterns — chat has parity with dashboard regardless of intent
+    data["historical_patterns"] = historical_patterns
+
+    log.info(
+        "realtime_node_done",
+        ticker=ticker,
+        price=data.get("price"),
+        historical_patterns=len(historical_patterns),
+    )
     return {"realtime_context": data}

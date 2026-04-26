@@ -72,8 +72,23 @@ export const StockDetailSchema = z.object({
   })).optional(),
   news_rag: z.array(NewsItemSchema).optional(),
   historical_signals: z.array(HistoricalSignalSchema).optional(),
+  similar_stocks: z.array(z.object({
+    ticker: z.string(),
+    name: z.string(),
+    sector: z.string(),
+    exchange: z.string(),
+    currency: z.string(),
+  })).optional(),
 });
 export type StockDetail = z.infer<typeof StockDetailSchema>;
+
+export const SectorDataSchema = z.object({
+  sector: z.string(),
+  etf: z.string(),
+  return_pct: z.number(),
+  price: z.number().nullable().optional(),
+});
+export type SectorData = z.infer<typeof SectorDataSchema>;
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────
 
@@ -114,7 +129,45 @@ export async function getOHLCV(ticker: string, range: OHLCVTimeframe = "1M"): Pr
   return z.array(OHLCVBarSchema).parse(data.bars ?? []);
 }
 
+export async function getSectors(): Promise<SectorData[]> {
+  try {
+    const res = await fetch(`${BACKEND}/api/stocks/sectors`, { next: { revalidate: 300 } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return z.array(SectorDataSchema).parse(data);
+  } catch {
+    return [];
+  }
+}
+
 export async function getHealth(): Promise<Record<string, unknown>> {
   const res = await fetch(`${BACKEND}/api/health`);
   return res.json();
+}
+
+export const EvalMetricSchema = z.object({
+  score: z.number(),
+  target: z.number(),
+  passed: z.boolean(),
+  delta: z.number().optional(),
+});
+
+export const EvalResponseSchema = z.object({
+  overall_pass: z.boolean(),
+  scores: z.record(z.number()),
+  results: z.record(EvalMetricSchema),
+  run_at: z.string().nullable().optional(),
+  tickers: z.array(z.string()).optional(),
+  n_pairs: z.number().optional(),
+});
+export type EvalResponse = z.infer<typeof EvalResponseSchema>;
+
+export async function getEvalResults(): Promise<EvalResponse | null> {
+  try {
+    const res = await fetch(`${BACKEND}/api/eval/latest`, { cache: "no-store" });
+    if (!res.ok) return null;
+    return EvalResponseSchema.parse(await res.json());
+  } catch {
+    return null;
+  }
 }

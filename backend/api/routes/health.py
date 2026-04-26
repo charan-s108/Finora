@@ -28,6 +28,7 @@ class EvalMetric(BaseModel):
     score: float
     target: float
     passed: bool
+    delta: float | None = None
 
 
 class EvalResponse(BaseModel):
@@ -35,6 +36,8 @@ class EvalResponse(BaseModel):
     scores: dict[str, float]
     results: dict[str, EvalMetric]
     run_at: str | None = None
+    tickers: list[str] = []
+    n_pairs: int | None = None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -104,6 +107,8 @@ async def eval_latest() -> EvalResponse:
                 k: EvalMetric(**v)
                 for k, v in data.get("results", {}).items()
             },
+            tickers=data.get("tickers", []),
+            n_pairs=data.get("n_pairs"),
             run_at=data.get("run_at"),
         )
     except Exception as exc:

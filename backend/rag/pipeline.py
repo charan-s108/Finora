@@ -43,7 +43,7 @@ def run_rag_branch(
     col = collection_name(branch.collection)
 
     # HyDE: generate hypothetical doc embedding for abstract queries
-    hyde_used = branch.use_hyde and bool(os.getenv("RAG_HYDE_ENABLED", "true") == "true")
+    hyde_used = branch.use_hyde and bool(os.getenv("RAG_HYDE_ENABLED", "false") == "true")
     if hyde_used:
         query_vector = generate_hyde_embedding(query)
     else:
@@ -71,9 +71,11 @@ def run_rag_branch(
         reranked = candidates[:top_k]
 
     # Drop chunks below minimum relevance (Cohere 0–1 range only; BGE logits skipped)
-    min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.1"))
+    # Fallback: if threshold wipes all results, keep top-2 — empty context is worse than low-score context
+    min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.05"))
     if reranked and 0.0 <= reranked[0].score <= 1.0:
-        reranked = [c for c in reranked if c.score >= min_score]
+        filtered = [c for c in reranked if c.score >= min_score]
+        reranked = filtered if filtered else reranked[:2]
 
     # Deduplication + MMR diversity
     final = deduplicate_and_diversify(query, reranked, top_k=top_k)

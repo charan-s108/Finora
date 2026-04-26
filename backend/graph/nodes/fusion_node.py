@@ -51,14 +51,78 @@ def _fmt_realtime(rt: dict | None, currency: str = "USD") -> str:
     return "\n".join(lines)
 
 
-def _fmt_chunks(chunks: list[dict], label: str, max_chunks: int = 8) -> str:
+def _fmt_historical_patterns(patterns: list[dict]) -> str:
+    """Format always-available historical patterns fetched alongside realtime data."""
+    if not patterns:
+        return ""
+    top = patterns[:2]
+    lines = [f"[HISTORICAL PATTERNS — {len(top)} events]"]
+    for i, p in enumerate(top, 1):
+        parts = [f"[{i}]"]
+        if p.get("event_type"):
+            parts.append(p["event_type"].replace("_", " ").title())
+        if p.get("date_range"):
+            parts.append(f"({p['date_range']})")
+        if p.get("return_pct") is not None:
+            parts.append(f"fwd return: {p['return_pct']:+.1f}%")
+        if p.get("text"):
+            parts.append(f"— {p['text'][:120]}")
+        lines.append(" ".join(parts))
+    return "\n".join(lines)
+
+
+_CHUNK_TEXT_LIMIT = int(os.getenv("RAG_CHUNK_TEXT_LIMIT", "400"))
+_MAX_NEWS_CHUNKS = int(os.getenv("RAG_MAX_NEWS_CHUNKS", "4"))
+_MAX_HIST_CHUNKS = int(os.getenv("RAG_MAX_HIST_CHUNKS", "3"))
+
+
+def _fmt_chunks(chunks: list[dict], label: str, max_chunks: int = _MAX_NEWS_CHUNKS) -> str:
     if not chunks:
         return f"[NO {label.upper()} DATA]"
-    lines = [f"[{label.upper()} - {len(chunks)} sources, reranked]"]
+    lines = [f"[{label.upper()} - {min(len(chunks), max_chunks)} sources]"]
     for i, ch in enumerate(chunks[:max_chunks], 1):
         source = ch.get("source", ch.get("url", "unknown"))
         date = ch.get("published_at", ch.get("start_date", ch.get("date_range", "")))
-        lines.append(f"[{i}] {source} ({date}): {ch.get('text', '')}")
+        text = ch.get("text", "")[:_CHUNK_TEXT_LIMIT]
+        lines.append(f"[{i}] {source} ({date}): {text}")
+    return "\n".join(lines)
+
+
+def _fmt_sector_context(sc: dict | None, currency: str = "USD") -> str:
+    if not sc:
+        return ""
+    sym = _currency_sym(currency)
+    lines = []
+
+    sector = sc.get("sector")
+    etf = sc.get("sector_etf")
+    if sector:
+        header = f"[SECTOR CONTEXT — {sector}]"
+        if etf:
+            pct = etf.get("return_pct", 0)
+            price = etf.get("price")
+            etf_name = etf.get("etf", "")
+            price_str = f" ({sym}{price:.2f})" if price else ""
+            header += f"\nSector ETF ({etf_name}){price_str}: {pct:+.2f}% today"
+        lines.append(header)
+
+    all_etfs = sc.get("all_sector_etfs", [])
+    if all_etfs:
+        sorted_etfs = sorted(all_etfs, key=lambda x: x.get("return_pct", 0), reverse=True)
+        etf_parts = [
+            f"{e['sector']} ({e['etf']}): {e.get('return_pct', 0):+.2f}%"
+            for e in sorted_etfs[:6]
+        ]
+        lines.append("Sector performance today:\n" + "\n".join(etf_parts))
+
+    similar = sc.get("similar_stocks", [])
+    if similar:
+        sim_parts = [
+            f"- {s['ticker']} ({s['exchange']}): {s['name']}"
+            for s in similar[:6]
+        ]
+        lines.append(f"Similar stocks in {sector or 'sector'}:\n" + "\n".join(sim_parts))
+
     return "\n".join(lines)
 
 
@@ -394,10 +458,21 @@ def _build_data_context(state: FiNoraState) -> str:
 
     rt_section = _fmt_realtime(rt, currency)
     news_section = _fmt_chunks(state.get("news_chunks", []), "NEWS")
-    hist_section = _fmt_chunks(state.get("historical_chunks", []), "HISTORICAL PATTERN")
-    fund_section = _fmt_fundamentals(fd, currency)
 
-    flags_text = "\n".join(f"- {f}" for f in insight_flags) if insight_flags else "No significant flags."
+    # Historical: prefer deep RAG chunks (historical_rag_node) when intent fired,
+    # otherwise use always-available patterns fetched alongside realtime data
+    rag_hist = state.get("historical_chunks", [])
+    if rag_hist:
+        hist_section = _fmt_chunks(rag_hist, "HISTORICAL PATTERN", max_chunks=_MAX_HIST_CHUNKS)
+    else:
+        # Always-available fallback: fetched in realtime_node concurrently
+        rt_patterns = (rt or {}).get("historical_patterns", [])
+        hist_section = _fmt_historical_patterns(rt_patterns)
+
+    fund_section = _fmt_fundamentals(fd, currency)
+    sector_section = _fmt_sector_context(state.get("sector_context"), currency)
+
+    flags_text = "\n".join(f"- {f}" for f in insight_flags[:4]) if insight_flags else "No significant flags."
     trend_text = "\n".join(
         f"- {k.replace('_', ' ').title()}: {v}" for k, v in trend.items()
     ) if trend else "Trend data unavailable."
@@ -408,24 +483,50 @@ def _build_data_context(state: FiNoraState) -> str:
         conv_lines = [f"{m['role'].upper()}: {m['content'][:200]}" for m in recent]
         conv_section = "[CONVERSATION HISTORY]\n" + "\n".join(conv_lines) + "\n\n"
 
-    conflict_text = (
-        f"CONFLICT DETECTED: {conflict_reason.replace('_', ' ')}"
-        if has_conflict else "No conflicts detected."
-    )
+    # Translate internal labels → natural language before sending to LLM
+    # This prevents label leakage ("dominant signal suggests", "uncertainty flag")
+    _HINT_TO_NL = {
+        "sharp_downward_move":   "The stock is experiencing a sharp decline today.",
+        "sharp_upward_move":     "The stock is surging sharply today.",
+        "high_volume_move":      "Unusually high trading volume is the dominant signal today.",
+        "near_52w_high":         "The stock is trading near its 52-week high.",
+        "near_52w_low":          "The stock is trading near its 52-week low.",
+        "analyst_strongly_bullish": "Analyst consensus is strongly bullish.",
+        "analyst_bearish":       "Analyst consensus is leaning bearish.",
+        "mild_upward_move":      "The stock is seeing a mild upward move today.",
+        "mild_downward_move":    "The stock is seeing a mild decline today.",
+        "consolidating":         "No strong directional signal is present — the stock is consolidating.",
+    }
+    market_context = _HINT_TO_NL.get(narrative_hint, "Market context is unclear.")
+
+    _CONFIDENCE_TO_POSTURE = {
+        "high":   "Be direct. State conclusions without hedging.",
+        "medium": "Be measured. Use 'data shows' or 'current price action shows' — not 'suggests' or 'indicates'.",
+        "low":    "Be cautious. Avoid directional conclusions. Acknowledge limited signal clearly.",
+    }
+    response_posture = _CONFIDENCE_TO_POSTURE.get(confidence_level, "Be cautious. Avoid strong conclusions.")
+
+    if uncertainty_flag:
+        response_posture += " No strong signal — do not construct a directional narrative."
+
+    if has_conflict:
+        _CONFLICT_NL = {
+            "price_down_but_analyst_bullish":      "Price is declining but analyst consensus is bullish — name this divergence explicitly.",
+            "price_up_but_analyst_cautious":       "Price is rising but analysts are cautious — name this divergence explicitly.",
+            "near_52w_low_but_analyst_bullish":    "Stock is near 52-week lows but analysts rate it bullish — name this divergence explicitly.",
+            "near_52w_high_but_target_below_price":"Stock is near 52-week highs but analyst target is below current price — name this divergence explicitly.",
+        }
+        conflict_text = _CONFLICT_NL.get(conflict_reason, f"Signal divergence detected: {conflict_reason.replace('_', ' ')}.")
+    else:
+        conflict_text = ""
 
     return f"""{conv_section}STOCK: {company_name} ({ticker}) | Currency: {currency}
 
-[DOMINANT SIGNAL]
-{narrative_hint}
-
-[CONFIDENCE LEVEL]
-{confidence_level}
-
-[UNCERTAINTY FLAG]
-{"true" if uncertainty_flag else "false"}
-
-[SIGNAL CONFLICT]
-{conflict_text}
+[MARKET CONTEXT — anchor your opening sentence here]
+{market_context}
+{f"[SIGNAL DIVERGENCE — acknowledge this in your narrative]{chr(10)}{conflict_text}" if conflict_text else ""}
+[RESPONSE POSTURE]
+{response_posture}
 
 [REAL-TIME DATA]
 {rt_section}
@@ -441,7 +542,8 @@ def _build_data_context(state: FiNoraState) -> str:
 
 {news_section}
 
-{hist_section}"""
+{hist_section}
+{chr(10) + sector_section if sector_section else ""}"""
 
 
 def fusion_node(state: FiNoraState) -> dict:

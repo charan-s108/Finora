@@ -352,3 +352,44 @@ def fetch_company_info(ticker: str) -> dict:
     except Exception as exc:
         log.warning("company_info_fetch_failed", ticker=ticker, error=str(exc))
         return {}
+
+
+# ── Sector ETF performance ─────────────────────────────────────────────────
+
+_SECTOR_ETFS: list[tuple[str, str]] = [
+    ("XLK",  "Technology"),
+    ("XLV",  "Healthcare"),
+    ("XLF",  "Financials"),
+    ("XLE",  "Energy"),
+    ("XLY",  "Consumer Disc."),
+    ("XLP",  "Consumer Staples"),
+    ("XLB",  "Materials"),
+    ("XLI",  "Industrials"),
+    ("XLU",  "Utilities"),
+    ("XLRE", "Real Estate"),
+    ("XLC",  "Comm. Services"),
+    ("SOXX", "Semiconductors"),
+]
+
+
+def fetch_sector_etfs() -> list[dict]:
+    """
+    Fetch daily % change for 12 US sector ETFs.
+    Returns [{sector, etf, return_pct, price}].
+    """
+    results = []
+    for etf, label in _SECTOR_ETFS:
+        try:
+            q = fetch_quote(etf)
+            pct = q.get("pct_change")
+            price = q.get("price")
+            if pct is not None:
+                results.append({
+                    "sector": label,
+                    "etf": etf,
+                    "return_pct": round(float(pct), 2),
+                    "price": round(float(price), 2) if price else None,
+                })
+        except Exception:
+            continue
+    return results

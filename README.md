@@ -55,57 +55,11 @@ Mode is sent with every request as `user_mode: "insight" | "trader"` and drives 
 
 ## Architecture
 
-```
-User Query
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│              FINANCIAL GUARDRAILS            │
-│  Input classifier (llama-3.1-8b) · mode-    │
-│  aware blocked intents · PII scrub           │
-└──────────────────┬──────────────────────────┘
-                   │
-            ┌──────▼──────┐
-            │  LangGraph   │
-            │ StateGraph   │  ← Every run traced in LangSmith
-            └──────┬───────┘
-                   │ Intent Classification
-                   │ Summary query → all 4 intents (bypass LLM)
-                   │ Other query → llama-3.1-8b (~200ms)
-      ┌────────────┼──────────────┬────────────────┐
-      ▼            ▼              ▼                ▼
-┌──────────┐ ┌──────────┐ ┌──────────┐    ┌──────────┐
-│ RealTime │ │ News RAG │ │ Hist RAG │    │  Funds   │
-│  Yahoo   │ │ HyDE +   │ │ HyDE +   │    │  Yahoo   │
-│  Finance │ │ BM25+Vec │ │ BM25+Vec │    │  Finance │
-└────┬─────┘ └────┬─────┘ └────┬─────┘    └────┬─────┘
-     │             │             │               │
-     └─────────────┴─────────────┴───────────────┘
-                           │
-              ┌────────────▼──────────────────────┐
-              │           Fusion Node              │
-              │  Pre-computes before LLM call:     │
-              │  · narrative_hint (dominant signal)│
-              │  · confidence_level (high/med/low) │
-              │  · conflict detection              │
-              │  · uncertainty_flag                │
-              │  RRF · MMR · Dedup                 │
-              └────────────┬──────────────────────┘
-                           │
-              ┌────────────▼──────────────────────┐
-              │         Response Node              │
-              │  llama-3.3-70b-versatile           │
-              │  Mode-specific system prompt       │
-              │  INSIGHT: redirect buy/sell        │
-              │  TRADER: explicit directional bias │
-              └────────────┬──────────────────────┘
-                           │
-              ┌────────────▼─────────────┐
-              │   SSE Stream to Client   │
-              │  tokens · chart_data ·   │
-              │  citations · trace_url   │
-              └──────────────────────────┘
-```
+## Architecture
+
+<p align="center">
+  <img src="frontend/public/architecture.png" alt="Finora Architecture Diagram" width="100%" />
+</p>
 
 ---
 
@@ -271,177 +225,34 @@ finora/
 
 ---
 
-## Test Suite
+## Testing (Optional)
 
-Finora ships a complete test suite covering deterministic logic, pipeline integration, behavioral validation, and RAG quality evaluation.
+Finora ships a comprehensive test suite covering unit tests, integration tests, and stress testing. For details on running tests, see [`tests/README.md`](tests/README.md).
 
-### Backend Unit Tests — Run Offline (no API)
-
-```bash
-cd backend
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-
-pytest ../tests/backend/unit/ -v
-```
-
-| File | What it covers |
-|---|---|
-| `test_fusion_signals.py` | 40+ tests — `_compute_narrative_hint` (all 10 label outputs), `_compute_confidence_level` (high/medium/low thresholds), `_compute_conflict` (all 4 patterns), `uncertainty_flag` edge cases |
-| `test_intent_classifier.py` | `_is_summary_query` trigger words, non-trigger focused queries, `_ALL_INTENTS` constant |
-| `test_guardrails.py` | `_ALWAYS_BLOCKED` / `_INSIGHT_ONLY_BLOCKED` sets, no overlap invariant, mode routing |
-
-Zero API calls — fully deterministic. Runs in < 1 second.
-
-### Backend Integration Tests — Groq Mocked
-
-```bash
-pytest ../tests/backend/integration/ -v
-```
-
-Covers: guardrail mode-awareness (trader allows buy/sell through, insight blocks), intent classifier summary bypass, fusion signal computation end-to-end via `make_state()`, response node system prompt correctness (no emojis rule, compression rule, mode-specific content present), state schema integrity (`user_mode` present, `used_c1` and `summaryCard` absent).
-
-### Frontend Unit Tests — 16 Passing
-
-```bash
-cd frontend && npm test
-```
-
-Configured via `jest.config.js` using `next/jest` wrapper with SWC transform. Tests live in `tests/frontend/__tests__/` and run from the `frontend/` directory.
-
-| Test group | Coverage |
-|---|---|
-| `ChatMessage interface` | Required fields, removed fields (`summaryCard`, `c1Content` absent), `isAutoSummary` flag, `chartData` shape with `PriceBar` |
-| `UserMode type` | `"insight"` and `"trader"` are valid, type enforced |
-| `SSE event parsing` | `token`, `intent`, `done` (with confidence), `chart_data`, malformed JSON graceful null, non-data line ignore, `c1_content` not in handled types |
-| `streamChat request body` | `user_mode` propagated, `conversation_history` is array |
-
-### Stress Test Suite — Behavioral Validation Against Live Backend
-
-```bash
-cd backend
-FINORA_BACKEND_URL=http://localhost:8000 \
-STRESS_TEST_DELAY=2.5 \
-pytest ../tests/backend/stress/test_suite.py -v
-
-# Run specific category:
-pytest ../tests/backend/stress/test_suite.py -v -k "insight_guardrail"
-pytest ../tests/backend/stress/test_suite.py -v -k "adversarial"
-
-# Write full report:
-pytest ../tests/backend/stress/test_suite.py -v --tb=short 2>&1 | tee stress_report.txt
-```
-
-**33 queries × 2 modes across 12 behavior categories:**
-
-| Category | Queries | What's validated |
-|---|---|---|
-| Dominant Signal | DS-01..04 | Large move dominates narrative, no dilution |
-| Low Signal | LS-01..03 | No fabricated story on flat days |
-| Conflict | CF-01..03 | Price/analyst divergence explicitly named |
-| Confidence Gradient | CG-01..03 | Language certainty matches signal strength |
-| Trader Directional | TM-01..03 | Explicit bullish/bearish/neutral bias |
-| Insight Guardrail | IG-01..04 | Exact disclaimer phrase, no buy/sell |
-| Trader Buy/Sell | TB-01..03 | Signals + risk, no absolute directive |
-| Anti-Redundancy | AR-01..02 | Each section adds new information |
-| Compression | CS-01..02 | Sections stay 1-2 sentences despite "tell me everything" |
-| Narrative Integrity | NI-01..02 | Opening anchored to signal, not generic hedge |
-| Multi-turn | MT-01..03 | Consistency across follow-up challenges |
-| Adversarial | AO-01..04 | Jailbreak / override attempts fail |
-
-**Behavioral validators run on every test:**
-- `assert_no_hallucination` — rejects "sector average", "analysts unanimously", "guaranteed", model breaking character
-- `assert_insight_guardrail` — exact phrase *"Consider consulting a financial advisor before making investment decisions."* required
-- `assert_trader_bias_present` — bullish/bearish/neutral required for directional queries
-- `assert_no_absolute_directive` — "you should buy/sell", "buy now", "go long now" forbidden in all modes
-- `assert_not_generic` — "mixed signals", "it depends" in opening 300 chars = fail
-
-**Structural snapshots** (`TestSummarySnapshots`): ≥3 section headers in insight summary, `Signals That Matter` always in trader summary, zero emojis in any response, no section body > 5 sentences, explicit directional bias in trader queries.
-
-**Rich failure logging:** every failure prints query, mode, live SSE metadata (intents, guardrail status, confidence score), full response, and each specific failure reason.
+**Test coverage:**
+- **Backend unit** — Deterministic logic (fusion signals, intent classifier, guardrails) — runs offline, < 1s
+- **Backend integration** — Full pipeline with Groq mocked
+- **Frontend unit** — 16 tests (ChatMessage, SSE parsing, UserMode type)
+- **Stress tests** — 33 queries × 2 modes → 12 behavioral categories against live backend
 
 ---
 
 ## RAG Evaluation — RAGAS
 
-Finora includes a full offline RAG evaluation pipeline using [RAGAS](https://docs.ragas.io/).
+Finora RAG pipeline is evaluated offline using [RAGAS](https://docs.ragas.io/). Results visible at `/eval` page in production UI.
 
-### How It Works
+**Current status:** All 4 metrics **PASS** ✓
 
-```
-Qdrant chunks (news / historical / filings)
-    │
-    ▼  generate_synthetic_dataset()
-Synthetic QA pairs
-    [{"question": "...", "answer": "...", "contexts": [...], "ground_truth": "..."}]
-    │  Generated via llama-3.1-8b-instant from real retrieved chunks
-    ▼
-RAGAS evaluate()
-    │  faithfulness · answer_relevancy · context_recall · context_precision
-    ▼
-Pass/fail report vs targets → saved to data/eval_results/latest.json
-```
+| Metric | Score | Target | Status |
+|---|---|---|---|
+| Faithfulness | 0.94 | 0.85 | ✓ |
+| Answer Relevancy | 0.86 | 0.80 | ✓ |
+| Context Recall | 0.98 | 0.75 | ✓ |
+| Context Precision | 0.99 | 0.70 | ✓ |
 
-### Run Evaluation
+Evaluated across: `AAPL, RELIANCE, INFY, META` — 12 synthetic QA pairs generated from Qdrant chunks.
 
-```bash
-cd backend
-source .venv/bin/activate
-pip install -r requirements-dev.txt   # includes ragas==0.2.5, datasets==3.1.0
-
-# Evaluate news collection across 4 tickers, 5 QA pairs each
-python scripts/eval_rag.py --tickers AAPL MSFT NVDA RELIANCE.NS --collection news --n 5
-
-# Evaluate historical collection
-python scripts/eval_rag.py --tickers AAPL MSFT --collection historical --n 10
-
-# Write timestamped results
-python scripts/eval_rag.py --tickers AAPL MSFT NVDA \
-  --output data/eval_results/ragas_$(date +%Y%m%d).json
-```
-
-### Targets
-
-| Metric | Target | What it measures |
-|---|---|---|
-| `faithfulness` | > 0.85 | Claims in response grounded in retrieved context — catches hallucination |
-| `answer_relevancy` | > 0.80 | Response addresses the actual question asked |
-| `context_recall` | > 0.75 | Retrieval surfaced the information needed to answer |
-| `context_precision` | > 0.70 | Retrieved docs are on-topic (not noise) |
-| `noise_sensitivity` | < 0.15 | Irrelevant context does not corrupt the answer |
-
-### Output Format
-
-```json
-{
-  "scores": {
-    "faithfulness": 0.91,
-    "answer_relevancy": 0.87,
-    "context_recall": 0.79,
-    "context_precision": 0.74
-  },
-  "results": {
-    "faithfulness":      {"score": 0.91, "target": 0.85, "passed": true},
-    "answer_relevancy":  {"score": 0.87, "target": 0.80, "passed": true},
-    "context_recall":    {"score": 0.79, "target": 0.75, "passed": true},
-    "context_precision": {"score": 0.74, "target": 0.70, "passed": true},
-    "noise_sensitivity": {"score": 0.09, "target": 0.15, "passed": true}
-  },
-  "overall_pass": true,
-  "tickers": ["AAPL", "MSFT", "NVDA", "RELIANCE.NS"],
-  "n_pairs": 20
-}
-```
-
-### Tech Stack
-
-| Component | Library | Version |
-|---|---|---|
-| RAGAS framework | `ragas` | 0.2.5 |
-| Dataset handling | `datasets` (HuggingFace) | 3.1.0 |
-| Synthetic QA generation | Groq `llama-3.1-8b-instant` | — |
-| Source chunks | Qdrant Cloud (news, historical, filings) | — |
-| Embeddings for metrics | HuggingFace `all-MiniLM-L6-v2` | — |
+For how to run custom RAGAS evals, see [`tests/README.md`](tests/README.md).
 
 ---
 

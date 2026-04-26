@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Any
 
 import structlog
@@ -7,7 +8,7 @@ from pydantic import BaseModel
 
 from api.middleware.rate_limit import limiter
 from rag.ingestion.universe import universe
-from rag.yahoo_client import fetch_company_info, fetch_fundamentals, fetch_news, fetch_ohlcv, fetch_quote
+from rag.yahoo_client import fetch_company_info, fetch_fundamentals, fetch_news, fetch_ohlcv, fetch_quote, fetch_sector_etfs
 
 log = structlog.get_logger()
 router = APIRouter(tags=["stocks"])
@@ -54,6 +55,21 @@ class HistoricalSignal(BaseModel):
     return_pct: float | None
 
 
+class SimilarStock(BaseModel):
+    ticker: str
+    name: str
+    sector: str
+    exchange: str
+    currency: str
+
+
+class SectorData(BaseModel):
+    sector: str
+    etf: str
+    return_pct: float
+    price: float | None = None
+
+
 class StockDetail(BaseModel):
     ticker: str
     name: str
@@ -83,6 +99,30 @@ class StockDetail(BaseModel):
     ohlcv_7d: list[OHLCVBar]
     news_rag: list[NewsItem]
     historical_signals: list[HistoricalSignal]
+    similar_stocks: list[SimilarStock] = []
+
+
+_SECTORS_CACHE: tuple[list[dict], float] | None = None
+_SECTORS_TTL = 300.0  # 5 minutes
+
+
+def _get_similar_stocks(current_ticker: str, sector: str | None, limit: int = 5) -> list[SimilarStock]:
+    if not sector:
+        return []
+    all_stocks = universe.search("", limit=10000)
+    similar = [
+        SimilarStock(
+            ticker=s["ticker"],
+            name=s["name"],
+            sector=s.get("sector", ""),
+            exchange=s.get("exchange", ""),
+            currency=s.get("currency", "USD"),
+        )
+        for s in all_stocks
+        if s.get("sector", "").lower() == sector.lower()
+        and s["ticker"] != current_ticker
+    ]
+    return similar[:limit]
 
 
 def _safe_float(val: Any) -> float | None:
@@ -209,6 +249,20 @@ async def _fetch_detail(yf_ticker: str, display_ticker: str) -> dict[str, Any]:
     return await loop.run_in_executor(None, _blocking)
 
 
+@router.get("/sectors", response_model=list[SectorData])
+@limiter.limit("30/minute")
+async def get_sectors(request: Request) -> list[SectorData]:
+    global _SECTORS_CACHE
+    now = time.monotonic()
+    if _SECTORS_CACHE and (now - _SECTORS_CACHE[1]) < _SECTORS_TTL:
+        return [SectorData(**s) for s in _SECTORS_CACHE[0]]
+
+    loop = asyncio.get_running_loop()
+    raw = await loop.run_in_executor(None, fetch_sector_etfs)
+    _SECTORS_CACHE = (raw, now)
+    return [SectorData(**s) for s in raw]
+
+
 @router.get("/search", response_model=list[StockSearchResult])
 @limiter.limit("60/minute")
 async def search_stocks(
@@ -255,12 +309,16 @@ async def get_stock(request: Request, ticker: str) -> StockDetail:
     except Exception as exc:
         log.warning("yahoo_fetch_failed", ticker=yf_ticker, error=str(exc))
 
+    sector = entry.get("sector")
+    similar = _get_similar_stocks(entry["ticker"], sector)
+
     return StockDetail(
         ticker=entry["ticker"],
         name=entry["name"],
         exchange=entry.get("exchange", ""),
         currency=entry.get("currency", "USD"),
-        sector=entry.get("sector"),
+        sector=sector,
+        similar_stocks=similar,
         **data,
     )
 
