@@ -55,8 +55,6 @@ Mode is sent with every request as `user_mode: "insight" | "trader"` and drives 
 
 ## Architecture
 
-## Architecture
-
 <p align="center">
   <img src="finora-frontend/public/architecture.png" alt="Finora Architecture Diagram" width="100%" />
 </p>
@@ -130,7 +128,7 @@ Maximal Marginal Relevance (λ=0.6) ensures final TOP_K chunks are both relevant
 | **Historical** | 20yr weekly OHLCV via Yahoo Finance → FinancialEventChunker → Qdrant |
 | **Scheduling** | APScheduler — news every 15min, historical daily |
 | **Guardrails** | `llama-3.1-8b` input classifier + mode-aware blocked intents + output hallucination check + PII scrub |
-| **Deploy** | Vercel (frontend) · Railway (backend) |
+| **Deploy** | Vercel (frontend) · HuggingFace (backend) |
 
 ---
 
@@ -138,89 +136,205 @@ Maximal Marginal Relevance (λ=0.6) ensures final TOP_K chunks are both relevant
 
 ```
 finora/
-├── .gitignore
+├── CLAUDE.md
 ├── docker-compose.yml
-├── README.md
-│
-├── finora-backend/
-│   ├── main.py               ← FastAPI app + lifespan (Yahoo warm-up, scheduler)
-│   ├── requirements.txt
-│   ├── requirements-dev.txt  ← pytest, ruff, black, mypy (not in Docker)
+├── finora-backend
+│   ├── backend
+│   │   ├── api
+│   │   │   ├── __init__.py
+│   │   │   ├── middleware
+│   │   │   │   ├── guardrails.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── rate_limit.py
+│   │   │   └── routes
+│   │   │       ├── chat.py
+│   │   │       ├── health.py
+│   │   │       ├── __init__.py
+│   │   │       └── stocks.py
+│   │   ├── data
+│   │   │   ├── eval_results
+│   │   │   │   ├── latest.json
+│   │   │   │   ├── ragas_20260426.json
+│   │   │   │   ├── ragas_20260426_v3.json
+│   │   │   │   └── ragas_20260426_v4.json
+│   │   │   └── universe
+│   │   │       └── stocks.json
+│   │   ├── finora_mcp
+│   │   │   ├── __init__.py
+│   │   │   ├── server.py
+│   │   │   └── tools
+│   │   │       ├── fundamentals.py
+│   │   │       ├── historical.py
+│   │   │       ├── __init__.py
+│   │   │       ├── news.py
+│   │   │       ├── quote.py
+│   │   │       └── screener.py
+│   │   ├── graph
+│   │   │   ├── finora_graph.py
+│   │   │   ├── __init__.py
+│   │   │   ├── nodes
+│   │   │   │   ├── fundamentals_node.py
+│   │   │   │   ├── fusion_node.py
+│   │   │   │   ├── historical_rag_node.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── intent_classifier.py
+│   │   │   │   ├── news_rag_node.py
+│   │   │   │   ├── realtime_node.py
+│   │   │   │   ├── response_cache.py
+│   │   │   │   └── response_node.py
+│   │   │   └── state.py
+│   │   ├── guardrails
+│   │   │   ├── classifier.py
+│   │   │   ├── disclaimers.py
+│   │   │   ├── __init__.py
+│   │   │   └── output_filter.py
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── observability
+│   │   │   ├── __init__.py
+│   │   │   ├── langsmith_client.py
+│   │   │   ├── langsmith_url.py
+│   │   │   └── metrics.py
+│   │   ├── rag
+│   │   │   ├── chunking
+│   │   │   │   ├── financial.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── strategies.py
+│   │   │   ├── embedder.py
+│   │   │   ├── evaluation
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── ragas_eval.py
+│   │   │   │   └── synthetic.py
+│   │   │   ├── ingestion
+│   │   │   │   ├── collections.py
+│   │   │   │   ├── filings.py
+│   │   │   │   ├── historical.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── news.py
+│   │   │   │   ├── scheduler.py
+│   │   │   │   └── universe.py
+│   │   │   ├── __init__.py
+│   │   │   ├── pipeline.py
+│   │   │   ├── retrieval
+│   │   │   │   ├── deduplication.py
+│   │   │   │   ├── hybrid.py
+│   │   │   │   ├── hyde.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── reranker.py
+│   │   │   │   └── router.py
+│   │   │   └── yahoo_client.py
+│   │   └── scripts
+│   │       ├── build_universe.py
+│   │       ├── eval_rag.py
+│   │       ├── ingest_historical.py
+│   │       └── ingest_news.py
 │   ├── Dockerfile
-│   │
-│   ├── api/routes/
-│   │   ├── chat.py           ← POST /api/chat — SSE, user_mode field, chart_data, citation gating
-│   │   ├── stocks.py         ← GET /api/stocks/search, /{ticker}, /{ticker}/ohlcv
-│   │   └── health.py         ← GET /api/health (real Groq ping)
-│   │
-│   ├── graph/
-│   │   ├── finora_graph.py   ← LangGraph StateGraph topology
-│   │   ├── state.py          ← FiNoraState TypedDict (includes user_mode: UserMode)
-│   │   └── nodes/
-│   │       ├── intent_classifier.py  ← Summary bypass + llama-3.1-8b classification
-│   │       ├── fusion_node.py        ← Pre-computed signals + data context builder
-│   │       └── response_node.py      ← Mode-split system prompts (INSIGHT / TRADER)
-│   │
-│   ├── rag/
-│   │   ├── retrieval/        ← hybrid, hyde, reranker, dedup, router
-│   │   ├── chunking/         ← sliding_window, semantic, financial_event
-│   │   ├── ingestion/        ← historical, news, filings, universe, scheduler
-│   │   └── evaluation/       ← ragas_eval, synthetic QA generator
-│   │
-│   ├── guardrails/
-│   │   ├── classifier.py     ← _ALWAYS_BLOCKED + _INSIGHT_ONLY_BLOCKED sets
-│   │   ├── output_filter.py  ← Hallucination check + PII scrub + grounding
-│   │   └── disclaimers.py    ← SEBI/SEC templates + injector
-│   │
-│   ├── mcp/                  ← FastMCP server + 6 tool definitions
-│   ├── observability/        ← LangSmith trace wrapper
-│   └── scripts/
-│       ├── build_universe.py
-│       ├── ingest_historical.py
-│       ├── ingest_news.py
-│       └── eval_rag.py
-│
-├── finora-frontend/
-│   ├── jest.config.js        ← next/jest wrapper, tests/ root override
-│   ├── app/
-│   │   ├── icon.svg          ← Favicon (Next.js App Router auto-detection)
-│   │   └── dashboard/[ticker]/
-│   │       ├── page.tsx      ← SSR stock detail, notFound() on bad ticker
-│   │       ├── loading.tsx   ← Skeleton layout during SSR fetch
-│   │       └── error.tsx     ← Branded error page for invalid tickers
-│   │
-│   ├── components/
-│   │   ├── dashboard/        ← StockSearch, StockHeader, PriceChart, FundamentalsGrid,
-│   │   │                        NewsRagPanel, HistoricalRagPanel, AnalystConsensus,
-│   │   │                        StockAbout, SectorHeatmap
-│   │   └── chat/
-│   │       ├── ChatWidget.tsx      ← FAB + panel, INSIGHT/TRADER mode state
-│   │       ├── ChatMessage.tsx     ← Markdown, embedded price charts, citations
-│   │       ├── ChatInput.tsx       ← Mode toggle UI + send
-│   │       └── SuggestionChips.tsx ← "Summarize this stock" primary chip + follow-ups
-│   │
-│   └── lib/
-│       ├── api.ts            ← Typed fetch client, Zod schemas
-│       └── streaming.ts      ← SSE parser, ChatMessage type, UserMode type, streamChat()
-│
-└── tests/
-    ├── README.md             ← How to run each suite
-    ├── backend/
-    │   ├── conftest.py       ← make_state() fixture builder
-    │   ├── unit/             ← No API calls — deterministic logic only
-    │   │   ├── test_fusion_signals.py     ← 40+ signal computation tests
-    │   │   ├── test_intent_classifier.py  ← Summary bypass + _ALL_INTENTS
-    │   │   └── test_guardrails.py         ← Blocked intent sets, mode routing
-    │   ├── integration/
-    │   │   └── test_pipeline.py           ← Full pipeline, Groq mocked
-    │   └── stress/                        ← Live backend tests (requires running backend)
-    │       ├── queries.py    ← 33 StressQuery objects across 12 behavior categories
-    │       └── test_suite.py ← Parameterized runner with behavioral validators,
-    │                            structural snapshots, hallucination checks,
-    │                            guardrail enforcement, failure logging
-    └── frontend/
-        └── __tests__/
-            └── streaming.test.ts  ← 16 tests — SSE parsing, ChatMessage shape, UserMode
+│   ├── .dockerignore
+│   ├── .env
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── README.md
+│   ├── requirements-dev.txt
+│   └── requirements.txt
+├── finora-frontend
+│   ├── app
+│   │   ├── api
+│   │   │   ├── chat
+│   │   │   │   └── route.ts
+│   │   │   └── stocks
+│   │   │       └── [ticker]
+│   │   │           └── ohlcv
+│   │   │               └── route.ts
+│   │   ├── dashboard
+│   │   │   ├── page.tsx
+│   │   │   └── [ticker]
+│   │   │       ├── error.tsx
+│   │   │       ├── loading.tsx
+│   │   │       └── page.tsx
+│   │   ├── eval
+│   │   │   └── page.tsx
+│   │   ├── icon.svg
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── providers.tsx
+│   ├── components
+│   │   ├── chat
+│   │   │   ├── ChatInput.tsx
+│   │   │   ├── ChatMessage.tsx
+│   │   │   ├── ChatWidget.tsx
+│   │   │   ├── StockSummaryCard.tsx
+│   │   │   ├── SuggestionChips.tsx
+│   │   │   └── TypingIndicator.tsx
+│   │   ├── dashboard
+│   │   │   ├── AnalystConsensus.tsx
+│   │   │   ├── FundamentalsGrid.tsx
+│   │   │   ├── HistoricalRagPanel.tsx
+│   │   │   ├── NewsRagPanel.tsx
+│   │   │   ├── PriceChart.tsx
+│   │   │   ├── SectorHeatmap.tsx
+│   │   │   ├── SimilarStocks.tsx
+│   │   │   ├── StockAbout.tsx
+│   │   │   ├── StockHeader.tsx
+│   │   │   └── StockSearch.tsx
+│   │   ├── landing
+│   │   │   ├── Features.tsx
+│   │   │   ├── Footer.tsx
+│   │   │   ├── Hero.tsx
+│   │   │   ├── MarketPulse.tsx
+│   │   │   └── Navbar.tsx
+│   │   └── ui
+│   │       ├── badge.tsx
+│   │       ├── command.tsx
+│   │       ├── FinoraIcon.tsx
+│   │       ├── skeleton.tsx
+│   │       ├── sparkline.tsx
+│   │       ├── StockLogo.tsx
+│   │       ├── ThemeToggle.tsx
+│   │       └── TickerTape.tsx
+│   ├── components.json
+│   ├── Dockerfile
+│   ├── .env
+│   ├── .env.example
+│   ├── jest.config.js
+│   ├── lib
+│   │   ├── api.ts
+│   │   ├── format.ts
+│   │   ├── streaming.ts
+│   │   ├── theme-context.tsx
+│   │   ├── universe.ts
+│   │   └── utils.ts
+│   ├── next.config.mjs
+│   ├── next-env.d.ts
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── architecture.png
+│   │   ├── finora_icon.png
+│   │   └── finora_logo.png
+│   ├── styles
+│   │   └── globals.css
+│   ├── tailwind.config.ts
+│   ├── tsconfig.json
+│   └── tsconfig.tsbuildinfo
+├── .gitignore
+├── README.md
+└── tests
+    ├── backend
+    │   ├── conftest.py
+    │   ├── integration
+    │   │   └── test_pipeline.py
+    │   ├── stress
+    │   │   ├── queries.py
+    │   │   └── test_suite.py
+    │   └── unit
+    │       ├── test_fusion_signals.py
+    │       ├── test_guardrails.py
+    │       └── test_intent_classifier.py
+    ├── frontend
+    │   └── __tests__
+    │       └── streaming.test.ts
+    └── README.md
 ```
 
 ---
@@ -287,10 +401,10 @@ python scripts/ingest_historical.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY -
 python scripts/ingest_news.py --tickers AAPL MSFT NVDA
 
 # Start backend
-uvicorn main:app --reload --port 7860
+uvicorn backend.main:app --reload --port 7860
 ```
 
-### 3. finora-frontend
+### 3. Frontend
 
 ```bash
 cd finora-frontend
@@ -311,28 +425,46 @@ docker-compose up --build
 
 ## Production Deploy
 
-### finora-backend → Railway
+### finora-backend → Hugging Face Spaces
+
+1. Create a new **Docker Space** for `finora-backend`.
+2. Add this to the top of the backend `README.md` in the Space repo:
+
+```yaml
+***
+title: finora-backend
+emoji: 🚀
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_port: 7860
+***
+```
+
+3. Make sure your backend container starts on `0.0.0.0:7860`.
 
 ```bash
-npm install -g @railway/cli
-railway login
-cd finora-backend && railway init
-railway up
+uvicorn main:app --host 0.0.0.0 --port 7860
+```
 
-railway variables set GROQ_API_KEY=gsk_...
-railway variables set GROQ_MODEL_PRIMARY=llama-3.3-70b-versatile
-railway variables set GROQ_MODEL_FAST=llama-3.1-8b-instant
-railway variables set LANGCHAIN_API_KEY=ls__...
-railway variables set LANGCHAIN_PROJECT=finora-prod
-railway variables set LANGCHAIN_TRACING_V2=true
-railway variables set QDRANT_URL=https://your-cluster.qdrant.io:6333
-railway variables set QDRANT_API_KEY=...
-railway variables set GUARDRAILS_ENABLED=true
-railway variables set DISCLAIMER_LOCALE=IN
-railway variables set CORS_ORIGINS=https://finora.vercel.app
-railway variables set ENV=production
+4. Set Hugging Face Space variables/secrets for:
+- `GROQ_API_KEY`
+- `GROQ_MODEL_PRIMARY`
+- `GROQ_MODEL_FAST`
+- `LANGCHAIN_API_KEY`
+- `LANGCHAIN_PROJECT`
+- `LANGCHAIN_TRACING_V2`
+- `QDRANT_URL`
+- `QDRANT_API_KEY`
+- `GUARDRAILS_ENABLED`
+- `DISCLAIMER_LOCALE`
+- `CORS_ORIGINS`
+- `ENV`
 
-railway domain   # → finora-backend.up.railway.app
+5. After deployment, your Space URL will be something like:
+
+```bash
+https://finora-backend.hf.space
 ```
 
 ### Frontend → Vercel
@@ -340,15 +472,15 @@ railway domain   # → finora-backend.up.railway.app
 ```bash
 npm install -g vercel
 cd finora-frontend && vercel
-vercel env add NEXT_PUBLIC_BACKEND_URL   # https://finora-backend.up.railway.app
+vercel env add NEXT_PUBLIC_BACKEND_URL
 vercel --prod
 ```
 
 ### Verify
 
 ```bash
-curl https://finora-backend.up.railway.app/api/health
-# → {"status":"ok","groq":"connected","qdrant":"connected","universe_size":555}
+curl https://<your-space-name>.hf.space/api/health
+# → {"status":"ok","qdrant":"connected","groq":"connected","langsmith":"configured","langsmith_url":"https://smith.langchain.com/projects/finora-prod","universe_size":553}
 ```
 
 ---

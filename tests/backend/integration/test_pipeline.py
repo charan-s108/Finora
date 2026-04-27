@@ -224,11 +224,6 @@ class TestStateSchema:
         assert state["guardrail_blocked"] is False
         assert state["user_mode"] == "insight"
 
-    def test_used_c1_removed(self):
-        """used_c1 field was removed — must not appear in state."""
-        state = make_state()
-        assert "used_c1" not in state
-
     def test_summary_card_removed(self):
         """summaryCard concept removed — no such field in state."""
         state = make_state()

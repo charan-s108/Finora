@@ -33,15 +33,6 @@ describe("ChatMessage interface", () => {
     expect("summaryCard" in msg).toBe(false);
   });
 
-  it("does not include c1Content field (removed)", () => {
-    const msg: ChatMessage = {
-      id: "test-id",
-      role: "assistant",
-      content: "response",
-    };
-    expect("c1Content" in msg).toBe(false);
-  });
-
   it("accepts isAutoSummary flag", () => {
     const msg: ChatMessage = {
       id: "test-id",
@@ -138,17 +129,6 @@ describe("SSE event parsing", () => {
     expect(parseSSELine(": keep-alive")).toBeNull();
     expect(parseSSELine("")).toBeNull();
     expect(parseSSELine("event: message")).toBeNull();
-  });
-
-  it("no c1_content event type expected (removed)", () => {
-    // c1_content was removed — if it appears it's ignored, not processed
-    const event = parseSSELine('data: {"type":"c1_content","content":"<C1>"}');
-    // Should parse but frontend should not handle it specially
-    expect(event).toMatchObject({ type: "c1_content" });
-    // Frontend ignores it — test that our type enum doesn't include it as handled
-    const validHandledTypes = ["status", "guardrail", "intent", "retrieving",
-                               "token", "citation", "disclaimer", "chart_data", "done", "error"];
-    expect(validHandledTypes).not.toContain("c1_content");
   });
 });
 

@@ -68,7 +68,7 @@ pytest ../tests/backend/integration/ -v
 | **Intent Classifier Summary Bypass** | "Summarize this stock" / "What's happening" → skip LLM, return all 4 intents |
 | **Fusion Signal Computation** | Pre-computed signals reach LLM prompt correctly. No lossy transformations. |
 | **Response Node System Prompts** | INSIGHT prompt enforces disclaimer phrase. TRADER prompt includes directional signals. No emojis in either mode. |
-| **State Schema Integrity** | `user_mode` field present. Removed fields (`used_c1`, `summaryCard`) absent. |
+| **State Schema Integrity** | `user_mode` field present. Removed fields (`summaryCard`) absent. |
 
 **Run:**
 ```bash
@@ -93,7 +93,7 @@ npm test
 |---|---|
 | `ChatMessage interface` | Required fields present. Removed fields absent (`summaryCard`, `c1Content`). `isAutoSummary` flag. `chartData` shape with `PriceBar` type. |
 | `UserMode type` | `"insight"` and `"trader"` are valid. Type enforced (TypeScript). |
-| `SSE event parsing` | `token` events accumulated correctly. `intent` badge mapping. `done` event extracts confidence score. `chart_data` events parsed. Malformed JSON → null graceful. Non-data lines ignored. `c1_content` not in handled types. |
+| `SSE event parsing` | `token` events accumulated correctly. `intent` badge mapping. `done` event extracts confidence score. `chart_data` events parsed. Malformed JSON → null graceful. Non-data lines ignored. |
 | `streamChat request body` | `user_mode` propagated in request. `conversation_history` is array. Ticker passed correctly. |
 
 **Run:**

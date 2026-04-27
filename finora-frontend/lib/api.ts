@@ -121,9 +121,7 @@ export const OHLCVBarSchema = z.object({
 export type OHLCVBar = z.infer<typeof OHLCVBarSchema>;
 
 export async function getOHLCV(ticker: string, range: OHLCVTimeframe = "1M"): Promise<OHLCVBar[]> {
-  // Use relative URL (Next.js proxy) so client-side calls stay same-origin — no CORS issues
-  const base = typeof window !== "undefined" ? "" : BACKEND;
-  const res = await fetch(`${base}/api/stocks/${encodeURIComponent(ticker)}/ohlcv?range=${range}`);
+  const res = await fetch(`${BACKEND}/api/stocks/${encodeURIComponent(ticker)}/ohlcv?range=${range}`);
   if (!res.ok) return [];
   const data = await res.json();
   return z.array(OHLCVBarSchema).parse(data.bars ?? []);

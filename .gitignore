@@ -57,7 +57,7 @@ logs/
 .docker/
 
 # ── Eval outputs ──────────────────────────────────────────────────────────────
-finora-backend/data/eval_results/*.json
+backend/data/eval_results/*.json
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 *.pem

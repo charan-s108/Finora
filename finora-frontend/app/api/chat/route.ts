@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-// BACKEND_URL = private server-side var (Railway injects, not exposed to client bundle)
+// BACKEND_URL = private server-side var (HuggingFace injects, not exposed to client bundle)
 // Falls back to NEXT_PUBLIC_BACKEND_URL for local dev where both are set to localhost
 const BACKEND = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:7860";
 

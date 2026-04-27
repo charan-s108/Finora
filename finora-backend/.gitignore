@@ -1,0 +1,22 @@
+# virtual environment
+.venv/
+venv/
+.env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# HF / ML caches
+data/
+data/hf_cache/
+data/qdrant/
+data/bm25_index/
+
+# logs
+*.log
+logs/
+
+# env files (IMPORTANT)
+.env
+finora-backend/.env

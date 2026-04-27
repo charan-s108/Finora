@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Required for Railway Docker deployment (standalone output = single server.js)
+  // Required for HuggingFace Docker deployment (standalone output = single server.js)
   output: "standalone",
 
   images: {
@@ -10,7 +10,7 @@ const nextConfig = {
   },
 
   async rewrites() {
-    // BACKEND_URL = private server-side var (Vercel dashboard / Railway env)
+    // BACKEND_URL = private server-side var (Vercel dashboard / HuggingFace env)
     // NEXT_PUBLIC_BACKEND_URL = public fallback for local dev
     const backendUrl =
       process.env.BACKEND_URL ||
