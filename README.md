@@ -58,7 +58,7 @@ Mode is sent with every request as `user_mode: "insight" | "trader"` and drives 
 ## Architecture
 
 <p align="center">
-  <img src="frontend/public/architecture.png" alt="Finora Architecture Diagram" width="100%" />
+  <img src="finora-frontend/public/architecture.png" alt="Finora Architecture Diagram" width="100%" />
 </p>
 
 ---
@@ -142,7 +142,7 @@ finora/
 ├── docker-compose.yml
 ├── README.md
 │
-├── backend/
+├── finora-backend/
 │   ├── main.py               ← FastAPI app + lifespan (Yahoo warm-up, scheduler)
 │   ├── requirements.txt
 │   ├── requirements-dev.txt  ← pytest, ruff, black, mypy (not in Docker)
@@ -180,7 +180,7 @@ finora/
 │       ├── ingest_news.py
 │       └── eval_rag.py
 │
-├── frontend/
+├── finora-frontend/
 │   ├── jest.config.js        ← next/jest wrapper, tests/ root override
 │   ├── app/
 │   │   ├── icon.svg          ← Favicon (Next.js App Router auto-detection)
@@ -266,14 +266,14 @@ Python 3.11+, Node.js 20+
 ```bash
 git clone https://github.com/charan-s108/Finora.git
 cd Finora
-cp backend/.env.example backend/.env
+cp finora-backend/.env.example finora-backend/.env
 # Fill in: GROQ_API_KEY, QDRANT_URL, QDRANT_API_KEY, LANGCHAIN_API_KEY
 ```
 
 ### 2. Backend
 
 ```bash
-cd backend
+cd finora-backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
@@ -287,15 +287,15 @@ python scripts/ingest_historical.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY -
 python scripts/ingest_news.py --tickers AAPL MSFT NVDA
 
 # Start backend
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 7860
 ```
 
-### 3. Frontend
+### 3. finora-frontend
 
 ```bash
-cd frontend
+cd finora-frontend
 npm install
-echo "NEXT_PUBLIC_BACKEND_URL=http://localhost:8000" > .env.local
+echo "NEXT_PUBLIC_BACKEND_URL=http://localhost:7860" > .env.local
 npm run dev
 ```
 
@@ -311,12 +311,12 @@ docker-compose up --build
 
 ## Production Deploy
 
-### Backend → Railway
+### finora-backend → Railway
 
 ```bash
 npm install -g @railway/cli
 railway login
-cd backend && railway init
+cd finora-backend && railway init
 railway up
 
 railway variables set GROQ_API_KEY=gsk_...
@@ -339,7 +339,7 @@ railway domain   # → finora-backend.up.railway.app
 
 ```bash
 npm install -g vercel
-cd frontend && vercel
+cd finora-frontend && vercel
 vercel env add NEXT_PUBLIC_BACKEND_URL   # https://finora-backend.up.railway.app
 vercel --prod
 ```
@@ -366,7 +366,7 @@ All LangGraph runs are automatically traced when `LANGCHAIN_TRACING_V2=true`.
 ### RAGAS Evaluation
 
 ```bash
-cd backend
+cd finora-backend
 python scripts/eval_rag.py --tickers AAPL MSFT RELIANCE.NS --n 5
 ```
 
@@ -434,7 +434,7 @@ Real connectivity checks — Groq (1-token ping), Qdrant (list collections).
 ## MCP Server
 
 ```bash
-cd backend && python -m mcp.server
+cd finora-backend && python -m mcp.server
 ```
 
 | Tool | Description |

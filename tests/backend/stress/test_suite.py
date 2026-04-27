@@ -3,8 +3,8 @@ Finora AI Stress Test Suite — all 12 categories.
 Runs against a live backend. Set FINORA_BACKEND_URL env var.
 
 Usage:
-    # Start backend first: cd backend && uvicorn main:app --port 8000
-    FINORA_BACKEND_URL=http://localhost:8000 pytest tests/backend/stress/test_suite.py -v
+    # Start backend first: cd backend && uvicorn main:app --port 7860
+    FINORA_BACKEND_URL=http://localhost:7860 pytest tests/backend/stress/test_suite.py -v
 
     # Run specific category:
     pytest tests/backend/stress/test_suite.py -v -k "insight_guardrail"
@@ -23,7 +23,7 @@ import requests
 
 from queries import STRESS_QUERIES, ADVISOR_DISCLAIMER, StressQuery
 
-BACKEND_URL = os.getenv("FINORA_BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("FINORA_BACKEND_URL", "http://localhost:7860")
 TICKER = os.getenv("STRESS_TEST_TICKER", "AAPL")
 TIMEOUT = int(os.getenv("STRESS_TEST_TIMEOUT", "60"))
 # Groq free tier: ~30 RPM. 2s between tests keeps well under limit.

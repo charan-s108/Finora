@@ -3,8 +3,8 @@
 # =============================================================================
 
 # ── Environment (never commit — contains real API keys) ───────────────────────
-backend/.env
-frontend/.env
+finora-backend/.env
+finora-frontend/.env
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -26,19 +26,19 @@ htmlcov/
 .coverage
 
 # ── Data & Models (large — regenerate via scripts) ───────────────────────────
-backend/data/hf_cache/
-backend/data/qdrant/
-backend/data/bm25_index/
-# backend/data/universe/stocks.json is committed (105KB, baked into Docker)
+finora-backend/data/hf_cache/
+finora-backend/data/qdrant/
+finora-backend/data/bm25_index/
+# finora-backend/data/universe/stocks.json is committed (105KB, baked into Docker)
 *.bin
 *.safetensors
 *.onnx
 
 # ── Node ──────────────────────────────────────────────────────────────────────
 node_modules/
-frontend/.next/
-frontend/out/
-frontend/.vercel/
+finora-frontend/.next/
+finora-frontend/out/
+finora-frontend/.vercel/
 *.tsbuildinfo
 
 # ── IDE ───────────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ logs/
 .docker/
 
 # ── Eval outputs ──────────────────────────────────────────────────────────────
-backend/data/eval_results/*.json
+finora-backend/data/eval_results/*.json
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 *.pem

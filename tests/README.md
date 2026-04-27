@@ -14,7 +14,7 @@ cd backend && pytest ../tests/backend/unit/ -v
 cd frontend && npm test
 
 # Stress tests (requires running backend)
-cd backend && FINORA_BACKEND_URL=http://localhost:8000 pytest ../tests/backend/stress/test_suite.py -v
+cd backend && FINORA_BACKEND_URL=http://localhost:7860 pytest ../tests/backend/stress/test_suite.py -v
 ```
 
 ---
@@ -112,17 +112,17 @@ npm test -- --watch
 
 **Live backend. 33 queries × 2 modes. 12 behavioral categories. Full guardrail + hallucination validation.**
 
-**Requires:** Running backend (`uvicorn main:app --port 8000`)
+**Requires:** Running backend (`uvicorn main:app --port 7860`)
 
 ```bash
 cd backend
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py  # or: uvicorn main:app --port 8000
+python main.py  # or: uvicorn main:app --port 7860
 
 # In another terminal:
 cd backend
-FINORA_BACKEND_URL=http://localhost:8000 \
+FINORA_BACKEND_URL=http://localhost:7860 \
 STRESS_TEST_DELAY=2.5 \
 pytest ../tests/backend/stress/test_suite.py -v
 ```
@@ -411,9 +411,9 @@ export PYTHONPATH=/path/to/backend:$PYTHONPATH
 ```
 
 ### Stress tests hanging
-- Ensure backend is running: `uvicorn main:app --port 8000`
+- Ensure backend is running: `uvicorn main:app --port 7860`
 - Check `FINORA_BACKEND_URL` env var: `echo $FINORA_BACKEND_URL`
-- Verify backend is healthy: `curl http://localhost:8000/api/health`
+- Verify backend is healthy: `curl http://localhost:7860/api/health`
 
 ### Frontend tests fail with "Cannot find module '@/'"
 ```bash
