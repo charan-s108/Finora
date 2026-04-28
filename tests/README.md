@@ -239,7 +239,7 @@ python scripts/eval_rag.py \
   --tickers AAPL MSFT NVDA META RELIANCE INFY \
   --collection historical \
   --n 3 \
-  --output data/eval_results/ragas_$(date +%Y%m%d_%H%M%S).json
+  --output backend/data/eval_results/ragas_$(date +%Y%m%d_%H%M%S).json
 ```
 
 ### Metrics & Targets
@@ -300,7 +300,7 @@ python scripts/eval_rag.py \
 2. **Evaluate** each pair with RAGAS metrics (uses Groq + local HF embeddings)
 3. **Compare** each metric score vs target threshold
 4. **Report** scores + pass/fail per metric + overall status
-5. **Save** to `data/eval_results/latest.json` (used by `/eval` page in UI)
+5. **Save** to `backend/data/eval_results/latest.json` (used by `/eval` page in UI)
 
 ### View Results
 
