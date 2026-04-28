@@ -1,0 +1,43 @@
+{
+  "scores": {
+    "faithfulness": 0.94,
+    "answer_relevancy": 0.86,
+    "context_recall": 0.98,
+    "context_precision": 0.99
+  },
+  "results": {
+    "faithfulness": {
+      "score": 0.94,
+      "target": 0.85,
+      "passed": true,
+      "delta": 0.09
+    },
+    "answer_relevancy": {
+      "score": 0.86,
+      "target": 0.8,
+      "passed": true,
+      "delta": 0.06
+    },
+    "context_recall": {
+      "score": 0.98,
+      "target": 0.75,
+      "passed": true,
+      "delta": 0.23
+    },
+    "context_precision": {
+      "score": 0.99,
+      "target": 0.7,
+      "passed": true,
+      "delta": 0.29
+    }
+  },
+  "overall_pass": true,
+  "tickers": [
+    "AAPL",
+    "RELIANCE",
+    "INFY",
+    "META"
+  ],
+  "n_pairs": 12,
+  "run_at": "2026-04-26T23:45:00.000000Z"
+}

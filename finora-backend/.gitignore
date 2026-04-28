@@ -8,7 +8,6 @@ __pycache__/
 *.pyc
 
 # HF / ML caches
-data/
 data/hf_cache/
 data/qdrant/
 data/bm25_index/
@@ -20,3 +19,4 @@ logs/
 # env files (IMPORTANT)
 .env
 finora-backend/.env
+hf_sync_env.py
