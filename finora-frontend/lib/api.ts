@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:7860";
+const BACKEND = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:7860";
 
 // ── Schemas ────────────────────────────────────────────────────────────────
 
