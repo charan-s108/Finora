@@ -29,10 +29,10 @@ log = structlog.get_logger()
 def _warm_yahoo_session() -> None:
     """Prime curl_cffi session cookies + crumb before first real request."""
     try:
-        from backend.rag.yahoo_client import _warm_session, _get_crumb
-        _warm_session("AAPL")
-        _warm_session("AAPL")
-        crumb = _get_crumb()
+        from backend.rag.yahoo_client import _warm_session, _get_valid_crumb
+        ticker = "AAPL"
+        _warm_session(ticker)
+        crumb = _get_valid_crumb(ticker)
         log.info("yahoo_session_warmed", crumb_ok=bool(crumb))
     except Exception as exc:
         log.warning("yahoo_warm_failed", error=str(exc))

@@ -64,8 +64,12 @@ backend/data/eval_results/*.json
 *.key
 *.p12
 
+# ── IDE ───────────────────────────────────────────────────────────────────────
+graphify-out/
+
 # ── Claude Code (internal architecture spec — not for public repo) ─────────────
 CLAUDE.md
+.claude/
 
 # ── Test outputs ──────────────────────────────────────────────────────────────
 tests/stress_report.txt

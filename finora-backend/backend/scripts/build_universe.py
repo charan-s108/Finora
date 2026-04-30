@@ -2,7 +2,7 @@
 """
 Fetch S&P 500 + NIFTY 50 tickers and write data/universe/stocks.json.
 Run once before starting the backend:
-    python scripts/build_universe.py
+    python backend/scripts/build_universe.py
 """
 
 import io
@@ -13,8 +13,10 @@ from pathlib import Path
 
 import requests
 
-# backend/data/universe/stocks.json — committed to git, baked into Docker image
-OUTPUT = Path(__file__).parent.parent / "data" / "universe" / "stocks.json"
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+OUTPUT = ROOT / "backend" / "data" / "universe" / "stocks.json"
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
 _HEADERS = {
@@ -61,116 +63,46 @@ def fetch_sp500() -> list[dict]:
 
 def fetch_nifty50() -> list[dict]:
     print("Fetching NIFTY 50 from Wikipedia...")
-    url = "https://en.wikipedia.org/wiki/NIFTY_50"
-    try:
-        tables = _html_tables(url)
-        # Find the table that has a ticker/symbol column
-        df = None
-        for t in tables:
-            cols = [str(c).lower() for c in t.columns]
-            if any("symbol" in c or "ticker" in c for c in cols):
-                df = t
-                break
-        if df is None:
-            raise ValueError("No NIFTY 50 table found")
+    tables = _html_tables("https://en.wikipedia.org/wiki/NIFTY_50")
 
-        col_map = {str(c).lower(): c for c in df.columns}
-        sym_col = next((col_map[c] for c in col_map if "symbol" in c or "ticker" in c), None)
-        name_col = next((col_map[c] for c in col_map if "company" in c or "name" in c or "stock" in c), None)
-        sect_col = next((col_map[c] for c in col_map if "sector" in c or "industry" in c), None)
+    df = None
+    for t in tables:
+        cols = [str(c).lower() for c in t.columns]
+        if any("symbol" in c or "ticker" in c for c in cols):
+            df = t
+            break
 
-        stocks = []
-        for _, row in df.iterrows():
-            ticker = str(row[sym_col]).strip() if sym_col else ""
-            name = str(row[name_col]).strip() if name_col else ticker
-            sector = str(row[sect_col]).strip() if sect_col else ""
-            if not ticker or ticker == "nan":
-                continue
-            yf_ticker = f"{ticker}.NS"
-            stocks.append({
-                "ticker": ticker,
-                "yf_ticker": yf_ticker,
-                "name": name,
-                "exchange": "NSE",
-                "sector": sector,
-                "country": "IN",
-                "currency": "INR",
-            })
+    if df is None:
+        raise RuntimeError("No NIFTY 50 table found on Wikipedia")
 
-        print(f"  NIFTY 50: {len(stocks)} stocks")
-        return stocks
+    col_map = {str(c).lower(): c for c in df.columns}
+    sym_col = next((col_map[c] for c in col_map if "symbol" in c or "ticker" in c), None)
+    name_col = next((col_map[c] for c in col_map if "company" in c or "name" in c or "stock" in c), None)
+    sect_col = next((col_map[c] for c in col_map if "sector" in c or "industry" in c), None)
 
-    except Exception as exc:
-        print(f"  WARNING: NIFTY 50 fetch failed ({exc}), using hardcoded fallback")
-        return _nifty50_fallback()
+    if sym_col is None or name_col is None:
+        raise RuntimeError("NIFTY 50 table missing required columns")
 
-
-def _nifty50_fallback() -> list[dict]:
-    entries = [
-        ("RELIANCE", "Reliance Industries", "Energy"),
-        ("TCS", "Tata Consultancy Services", "Information Technology"),
-        ("HDFCBANK", "HDFC Bank", "Financial Services"),
-        ("INFY", "Infosys", "Information Technology"),
-        ("HINDUNILVR", "Hindustan Unilever", "FMCG"),
-        ("ICICIBANK", "ICICI Bank", "Financial Services"),
-        ("KOTAKBANK", "Kotak Mahindra Bank", "Financial Services"),
-        ("SBIN", "State Bank of India", "Financial Services"),
-        ("BHARTIARTL", "Bharti Airtel", "Telecom"),
-        ("ITC", "ITC Limited", "FMCG"),
-        ("BAJFINANCE", "Bajaj Finance", "Financial Services"),
-        ("LT", "Larsen & Toubro", "Construction"),
-        ("HCLTECH", "HCL Technologies", "Information Technology"),
-        ("ASIANPAINT", "Asian Paints", "Materials"),
-        ("AXISBANK", "Axis Bank", "Financial Services"),
-        ("MARUTI", "Maruti Suzuki India", "Automobile"),
-        ("SUNPHARMA", "Sun Pharmaceutical", "Healthcare"),
-        ("TITAN", "Titan Company", "Consumer Discretionary"),
-        ("ULTRACEMCO", "UltraTech Cement", "Materials"),
-        ("NESTLEIND", "Nestle India", "FMCG"),
-        ("WIPRO", "Wipro", "Information Technology"),
-        ("ADANIENT", "Adani Enterprises", "Industrials"),
-        ("ADANIPORTS", "Adani Ports & SEZ", "Industrials"),
-        ("BAJAJFINSV", "Bajaj Finserv", "Financial Services"),
-        ("BPCL", "Bharat Petroleum", "Energy"),
-        ("CIPLA", "Cipla", "Healthcare"),
-        ("COALINDIA", "Coal India", "Energy"),
-        ("DIVISLAB", "Divi's Laboratories", "Healthcare"),
-        ("DRREDDY", "Dr. Reddy's Laboratories", "Healthcare"),
-        ("EICHERMOT", "Eicher Motors", "Automobile"),
-        ("GRASIM", "Grasim Industries", "Materials"),
-        ("HDFCLIFE", "HDFC Life Insurance", "Financial Services"),
-        ("HEROMOTOCO", "Hero MotoCorp", "Automobile"),
-        ("HINDALCO", "Hindalco Industries", "Materials"),
-        ("INDUSINDBK", "IndusInd Bank", "Financial Services"),
-        ("JSWSTEEL", "JSW Steel", "Materials"),
-        ("M&M", "Mahindra & Mahindra", "Automobile"),
-        ("NTPC", "NTPC", "Utilities"),
-        ("ONGC", "Oil & Natural Gas Corporation", "Energy"),
-        ("POWERGRID", "Power Grid Corporation", "Utilities"),
-        ("SBILIFE", "SBI Life Insurance", "Financial Services"),
-        ("SHREECEM", "Shree Cement", "Materials"),
-        ("TATACONSUM", "Tata Consumer Products", "FMCG"),
-        ("TATAMOTORS", "Tata Motors", "Automobile"),
-        ("TATASTEEL", "Tata Steel", "Materials"),
-        ("TECHM", "Tech Mahindra", "Information Technology"),
-        ("TRENT", "Trent", "Consumer Discretionary"),
-        ("UPL", "UPL", "Materials"),
-        ("VEDL", "Vedanta", "Materials"),
-        ("ZOMATO", "Zomato", "Consumer Discretionary"),
-    ]
-    return [
-        {
-            "ticker": t,
-            "yf_ticker": f"{t}.NS",
-            "name": n,
+    stocks = []
+    for _, row in df.iterrows():
+        ticker = str(row[sym_col]).strip()
+        name = str(row[name_col]).strip()
+        sector = str(row[sect_col]).strip() if sect_col else ""
+        if not ticker or ticker.lower() == "nan":
+            continue
+        stocks.append({
+            "ticker": ticker,
+            "yf_ticker": f"{ticker}.NS",
+            "name": name,
             "exchange": "NSE",
-            "sector": s,
+            "sector": sector,
             "country": "IN",
             "currency": "INR",
-        }
-        for t, n, s in entries
-    ]
+        })
 
+    print(f"  NIFTY 50: {len(stocks)} stocks")
+    return stocks
+    
 
 def build() -> None:
     sp500 = fetch_sp500()

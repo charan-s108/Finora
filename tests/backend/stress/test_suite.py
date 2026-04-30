@@ -3,7 +3,7 @@ Finora AI Stress Test Suite — all 12 categories.
 Runs against a live backend. Set FINORA_BACKEND_URL env var.
 
 Usage:
-    # Start backend first: cd backend && uvicorn main:app --port 7860
+    # Start backend first: cd backend && uvicorn backend.main:app --port 7860
     FINORA_BACKEND_URL=http://localhost:7860 pytest tests/backend/stress/test_suite.py -v
 
     # Run specific category:

@@ -226,6 +226,7 @@ finora/
 │   │   └── scripts
 │   │       ├── build_universe.py
 │   │       ├── eval_rag.py
+│   │       └── ingest_filings.py
 │   │       ├── ingest_historical.py
 │   │       └── ingest_news.py
 │   ├── Dockerfile
@@ -392,13 +393,16 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Build stock universe (required first — ~555 stocks → stocks.json)
-python scripts/build_universe.py
+python backend/scripts/build_universe.py
 
 # Seed historical RAG data (~30 min for full list)
-python scripts/ingest_historical.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY --years 20
+python backend/scripts/ingest_historical.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY --years 20
 
 # Seed news corpus
-python scripts/ingest_news.py --tickers AAPL MSFT NVDA
+python backend/scripts/ingest_news.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY
+
+# Seed filings
+python backend/scripts/ingest_filings.py --tickers AAPL MSFT NVDA RELIANCE TCS INFY
 
 # Start backend
 uvicorn backend.main:app --reload --port 7860
@@ -444,7 +448,7 @@ app_port: 7860
 3. Make sure your backend container starts on `0.0.0.0:7860`.
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 7860
+uvicorn backend.main:app --host 0.0.0.0 --port 7860
 ```
 
 4. Set Hugging Face Space variables/secrets for:
@@ -499,7 +503,7 @@ All LangGraph runs are automatically traced when `LANGCHAIN_TRACING_V2=true`.
 
 ```bash
 cd finora-backend
-python scripts/eval_rag.py --tickers AAPL MSFT RELIANCE.NS --n 5
+python backend/scripts/eval_rag.py --tickers AAPL MSFT RELIANCE.NS --n 5
 ```
 
 | Metric | Target |

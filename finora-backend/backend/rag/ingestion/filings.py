@@ -25,31 +25,36 @@ _chunker = SemanticChunker(threshold=0.75, min_tokens=300, max_tokens=800)
 _EDGAR_BASE = "https://data.sec.gov"
 _HEADERS = {"User-Agent": os.getenv("SEC_EDGAR_USER_AGENT", "contact@finora.app")}
 _FORM_TYPES = {"10-K", "10-Q"}
+_SEC_MAP = None
 
+def _load_sec_map():
+    global _SEC_MAP
+    if _SEC_MAP:
+        return _SEC_MAP
 
-def _get_cik(ticker: str) -> str | None:
-    """Look up SEC CIK number for a ticker."""
     try:
         resp = requests.get(
-            f"{_EDGAR_BASE}/submissions/",
-            params={"action": "getcompany", "company": ticker, "type": "10-K", "dateb": "", "owner": "include"},
-            headers=_HEADERS,
-            timeout=10,
-        )
-        # Use the company tickers JSON instead — faster and reliable
-        tickers_resp = requests.get(
             "https://www.sec.gov/files/company_tickers.json",
             headers=_HEADERS,
             timeout=10,
         )
-        tickers_resp.raise_for_status()
-        data = tickers_resp.json()
-        for entry in data.values():
-            if entry.get("ticker", "").upper() == ticker.upper():
-                return str(entry["cik_str"]).zfill(10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        _SEC_MAP = {
+            entry["ticker"].upper(): str(entry["cik_str"]).zfill(10)
+            for entry in data.values()
+        }
+        return _SEC_MAP
+
     except Exception as exc:
-        log.error("edgar_cik_lookup_failed", ticker=ticker, error=str(exc))
-    return None
+        log.error("sec_map_failed", error=str(exc))
+        return {}
+
+
+def _get_cik(ticker: str) -> str | None:
+    sec_map = _load_sec_map()
+    return sec_map.get(ticker.upper())
 
 
 def _get_recent_filings(cik: str, max_filings: int = 3) -> list[dict]:
@@ -99,10 +104,9 @@ def _fetch_filing_text(cik: str, accession: str, primary_doc: str) -> str:
             text = re.sub(r"&[a-z]+;", " ", text)
             text = re.sub(r"\s{3,}", "\n\n", text)
 
-        # Take middle section (skip boilerplate headers/footers)
         words = text.split()
-        if len(words) > 2000:
-            text = " ".join(words[200:8000])  # ~7800 words of substantive content
+        if len(words) > 8000:
+            text = " ".join(words[:8000])
 
         return text.strip()
     except Exception as exc:
@@ -115,8 +119,11 @@ def ingest_ticker(
     client: QdrantClient | None = None,
     max_filings: int = 2,
 ) -> int:
+    
+    log.info("filing_start", ticker=ticker)
+
     # Only US tickers — NIFTY 50 uses Indian exchanges, no SEC filings
-    if ticker.endswith(".NS") or ticker.endswith(".BSE"):
+    if ticker.endswith((".NS", ".BO")):
         return 0
 
     c = client or get_client()
@@ -128,12 +135,15 @@ def ingest_ticker(
         return 0
 
     filings = _get_recent_filings(cik, max_filings)
+
+    log.info("filings_found", ticker=ticker, count=len(filings))
+
     if not filings:
         return 0
 
     total_chunks = 0
     for filing in filings:
-        time.sleep(0.5)  # SEC fair use: no hammering
+        time.sleep(1)
         text = _fetch_filing_text(filing["cik"], filing["accession"], filing["primary_doc"])
         if len(text) < 500:
             continue

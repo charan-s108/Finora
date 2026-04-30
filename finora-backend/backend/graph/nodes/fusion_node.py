@@ -163,6 +163,21 @@ def _fmt_fundamentals(fd: dict | None, currency: str = "USD") -> str:
 
     return " | ".join(parts) if parts else "[LIMITED FUNDAMENTAL DATA]"
 
+def _fmt_filings(chunks: list[dict]) -> str:
+    if not chunks:
+        return "[NO FILINGS DATA]"
+
+    lines = [f"[FILINGS CONTEXT — {len(chunks)} excerpts]"]
+
+    for i, ch in enumerate(chunks[:4], 1):
+        form = ch.get("filing_type", "")
+        period = ch.get("period", "")
+        text = ch.get("text", "")[:400]
+
+        lines.append(f"[{i}] {form} ({period}): {text}")
+
+    return "\n".join(lines)
+
 
 def _compute_insight_flags(state: FiNoraState) -> list[str]:
     """Pre-compute interpretive signals grounded in data — no hallucination possible."""
@@ -170,6 +185,19 @@ def _compute_insight_flags(state: FiNoraState) -> list[str]:
     rt = state.get("realtime_context") or {}
     fd = state.get("fundamental_data") or {}
     sym = _currency_sym(state.get("currency", "USD"))
+
+    filings = state.get("filings_chunks", [])
+    if filings:
+        recent_forms = {ch.get("filing_type", "") for ch in filings}
+
+        if any(f in ("10-K", "10-Q", "Annual Report", "Quarterly Results") for f in recent_forms):
+            flags.append("Recent earnings/financial filings available — includes official performance disclosures")
+
+        elif any(f in ("8-K", "Corporate Action") for f in recent_forms):
+            flags.append("Recent corporate event filings detected — may indicate material business updates")
+
+        else:
+            flags.append("Recent company filings available — includes primary disclosures and management commentary")
 
     # Volume anomaly
     vol = rt.get("volume")
@@ -338,9 +366,10 @@ def _compute_confidence_level(state: FiNoraState) -> str:
         strong_signals += 1
 
     has_news = bool(state.get("news_chunks"))
+    has_filings = bool(state.get("filings_chunks"))
     has_historical = bool(state.get("historical_chunks"))
     has_fundamentals = bool(fd)
-    data_sources = sum([bool(rt), has_news, has_historical, has_fundamentals])
+    data_sources = sum([bool(rt), has_news, has_filings, has_historical, has_fundamentals])
 
     if strong_signals >= 3 and data_sources >= 3:
         return "high"
@@ -433,6 +462,8 @@ def _compute_confidence(state: FiNoraState) -> float:
         score += 0.3
     if state.get("news_chunks"):
         score += 0.3
+    if state.get("filings_chunks"):
+        score += 0.35
     if state.get("historical_chunks"):
         score += 0.25
     if state.get("fundamental_data"):
@@ -458,6 +489,7 @@ def _build_data_context(state: FiNoraState) -> str:
 
     rt_section = _fmt_realtime(rt, currency)
     news_section = _fmt_chunks(state.get("news_chunks", []), "NEWS")
+    filings_section = _fmt_filings(state.get("filings_chunks", []))
 
     # Historical: prefer deep RAG chunks (historical_rag_node) when intent fired,
     # otherwise use always-available patterns fetched alongside realtime data
@@ -541,6 +573,8 @@ def _build_data_context(state: FiNoraState) -> str:
 {fund_section}
 
 {news_section}
+
+{filings_section}
 
 {hist_section}
 {chr(10) + sector_section if sector_section else ""}"""

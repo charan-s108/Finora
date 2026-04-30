@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from backend.api.middleware.rate_limit import limiter
 from backend.rag.ingestion.universe import universe
-from backend.rag.yahoo_client import fetch_company_info, fetch_fundamentals, fetch_news, fetch_ohlcv, fetch_quote, fetch_sector_etfs
+from backend.rag.yahoo_client import fetch_company_info, fetch_fundamentals, fetch_news, fetch_ohlcv, fetch_quote, fetch_sector_etfs, fetch_filings
 
 log = structlog.get_logger()
 router = APIRouter(tags=["stocks"])
@@ -69,6 +69,13 @@ class SectorData(BaseModel):
     return_pct: float
     price: float | None = None
 
+class FilingItem(BaseModel):
+    ticker: str
+    form: str
+    filing_date: str
+    accession_number: str
+    document: str
+    url: str
 
 class StockDetail(BaseModel):
     ticker: str
@@ -100,6 +107,7 @@ class StockDetail(BaseModel):
     news_rag: list[NewsItem]
     historical_signals: list[HistoricalSignal]
     similar_stocks: list[SimilarStock] = []
+    filings: list[FilingItem] = []
 
 
 _SECTORS_CACHE: tuple[list[dict], float] | None = None
@@ -211,6 +219,23 @@ async def _fetch_detail(yf_ticker: str, display_ticker: str) -> dict[str, Any]:
         except Exception:
             pass  # Qdrant unavailable or ticker not in historical corpus
 
+        filings: list[FilingItem] = []
+
+        try:
+            raw_filings = fetch_filings(yf_ticker)
+            for f in raw_filings:
+                filings.append(FilingItem(
+                    ticker=display_ticker,
+                    form=f.get("form", ""),
+                    filing_date=f.get("filing_date", f.get("date", "")),
+                    accession_number=f.get("accession_number", ""),
+                    document=f.get("document", ""),
+                    url=f.get("url", ""),
+                ))
+        except Exception as exc:
+            log.warning("filings_fetch_failed", ticker=yf_ticker, error=str(exc))
+            filings = []
+
         ac = fund.get("analyst_consensus", {}) or {}
         consensus = AnalystConsensus(
             buy=int(ac.get("buy") or 0),
@@ -243,6 +268,7 @@ async def _fetch_detail(yf_ticker: str, display_ticker: str) -> dict[str, Any]:
             "ohlcv_7d": ohlcv_7d,
             "news_rag": news_rag,
             "historical_signals": historical_signals,
+            "filings": filings,
         }
 
     loop = asyncio.get_running_loop()

@@ -16,6 +16,9 @@ from functools import lru_cache
 import pandas as pd
 import structlog
 
+import threading
+_crumb_lock = threading.Lock()
+
 log = structlog.get_logger()
 
 try:
@@ -35,19 +38,29 @@ _crumb_ts: float = 0.0
 _CRUMB_TTL = 3600  # seconds
 
 
-def _get_crumb() -> str:
+def _get_valid_crumb(ticker: str) -> str:
     global _crumb, _crumb_ts
+
     if _crumb and time.time() - _crumb_ts < _CRUMB_TTL:
         return _crumb
-    try:
-        r = _session.get(f"{_BASE2}/v1/test/getcrumb", timeout=10)
-        if r.status_code == 200 and r.text.strip():
-            _crumb = r.text.strip()
-            _crumb_ts = time.time()
+
+    with _crumb_lock:
+        # double-check inside lock
+        if _crumb and time.time() - _crumb_ts < _CRUMB_TTL:
             return _crumb
-    except Exception as exc:
-        log.warning("crumb_fetch_failed", error=str(exc))
-    return ""
+
+        _warm_session(ticker)
+
+        try:
+            r = _session.get(f"{_BASE2}/v1/test/getcrumb", timeout=10)
+            if r.status_code == 200 and r.text.strip():
+                _crumb = r.text.strip()
+                _crumb_ts = time.time()
+                return _crumb
+        except Exception as exc:
+            log.warning("crumb_fetch_failed", error=str(exc))
+
+    raise RuntimeError("Failed to obtain Yahoo crumb")
 
 
 def _warm_session(ticker: str) -> None:
@@ -152,15 +165,19 @@ def fetch_quote(ticker: str) -> dict:
         meta = chart_result[0].get("meta", {})
         price = meta.get("regularMarketPrice")
         prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
-        change = round(price - prev_close, 4) if price and prev_close else None
-        pct_change = round(change / prev_close * 100, 2) if change and prev_close else None
+        if price is not None and prev_close is not None:
+            change = round(price - prev_close, 4)
+            pct_change = round(change / prev_close * 100, 2)
+        else:
+            change = None
+            pct_change = None
 
         # Intraday OHLC from timestamps
         quote = chart_result[0].get("indicators", {}).get("quote", [{}])[0]
-        opens = [v for v in (quote.get("open") or []) if v]
-        highs = [v for v in (quote.get("high") or []) if v]
-        lows = [v for v in (quote.get("low") or []) if v]
-        volumes = [v for v in (quote.get("volume") or []) if v]
+        opens = [v for v in (quote.get("open") or []) if v is not None]
+        highs = [v for v in (quote.get("high") or []) if v is not None]
+        lows = [v for v in (quote.get("low") or []) if v is not None]
+        volumes = [v for v in (quote.get("volume") or []) if v is not None]
 
         return {
             "ticker": ticker,
@@ -192,13 +209,14 @@ def fetch_news(ticker: str, count: int = 8) -> list[dict]:
     """
     if not _AVAILABLE:
         return []
-    try:
-        import datetime as _dt
-        import xml.etree.ElementTree as _ET
 
-        # Build locale-aware query
+    try:
+        import xml.etree.ElementTree as _ET
+        from email.utils import parsedate_to_datetime
+
         is_india = ticker.endswith((".NS", ".BO"))
         base = ticker.replace(".NS", "").replace(".BO", "")
+
         if is_india:
             query = f"{base} NSE stock India"
             params = {"q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en"}
@@ -213,21 +231,24 @@ def fetch_news(ticker: str, count: int = 8) -> list[dict]:
 
         root = _ET.fromstring(r.content)
         items = root.findall(".//item")[:count]
+
         results: list[dict] = []
+
         for item in items:
-            title = item.findtext("title", "")
-            link = item.findtext("link", "")
-            source = item.findtext("source", "Google News")
-            pub_date = item.findtext("pubDate", "")
-            description = item.findtext("description", "")
-            # Parse date: "Fri, 24 Apr 2026 07:30:00 GMT"
+            title = item.findtext("title", "") or ""
+            link = item.findtext("link", "") or ""
+            source = item.findtext("source", "Google News") or "Google News"
+            pub_date = item.findtext("pubDate", "") or ""
+            description = item.findtext("description", "") or ""
+
             try:
-                dt = _dt.datetime.strptime(pub_date[:16].strip(), "%a, %d %b %Y")
+                dt = parsedate_to_datetime(pub_date)
                 date_str = dt.strftime("%Y-%m-%d")
             except Exception:
-                date_str = pub_date[:10]
+                date_str = pub_date[:10] if pub_date else None
+
             results.append({
-                "text": f"{title}. {description}".strip(". ") if description else title,
+                "text": f"{title}. {description}".strip(". "),
                 "url": link,
                 "title": title,
                 "source": source,
@@ -235,8 +256,10 @@ def fetch_news(ticker: str, count: int = 8) -> list[dict]:
                 "ticker": ticker,
                 "live": True,
             })
+
         log.info("news_rss_ok", ticker=ticker, count=len(results))
         return results
+
     except Exception as exc:
         log.warning("news_fetch_failed", ticker=ticker, error=str(exc))
         return []
@@ -246,18 +269,23 @@ def fetch_news(ticker: str, count: int = 8) -> list[dict]:
 
 def fetch_fundamentals(ticker: str) -> dict:
     """PE, EPS, margins, analyst consensus via quoteSummary API."""
+    global _crumb
+
     if not _AVAILABLE:
         return {"ticker": ticker, "error": "curl_cffi unavailable"}
 
-    try:
-        # Warm session + get crumb on first call
-        _warm_session(ticker)
-        crumb = _get_crumb()
-    except Exception as exc:
-        log.warning("fundamentals_session_failed", ticker=ticker, error=str(exc))
-        return {"ticker": ticker, "error": str(exc)}
+    for attempt in range(2):
+        try:
+            crumb = _get_valid_crumb(ticker)
+            break
+        except Exception as exc:
+            log.warning("crumb_retry", ticker=ticker, error=str(exc))
+            _crumb = None
 
-    modules = "summaryDetail,financialData,defaultKeyStatistics,recommendationTrend"
+            if attempt == 1:
+                return {"ticker": ticker, "error": "crumb init failed"}
+
+    modules = "summaryDetail,financialData,defaultKeyStatistics,recommendationTrend,assetProfile,summaryProfile,price,quoteType"
     params: dict = {"modules": modules}
     if crumb:
         params["crumb"] = crumb
@@ -269,9 +297,32 @@ def fetch_fundamentals(ticker: str) -> dict:
             timeout=15,
         )
         data = r.json()
-        result = data.get("quoteSummary", {}).get("result", [])
+        result = (data.get("quoteSummary") or {}).get("result") or []
+        result = [r for r in result if r]
+
         if not result:
-            return {"ticker": ticker}
+            log.warning("empty_fundamentals", ticker=ticker)
+
+            _crumb = None
+            _warm_session(ticker)
+
+            try:
+                crumb = _get_valid_crumb(ticker)
+                params["crumb"] = crumb
+
+                r = _session.get(
+                    f"{_BASE1}/v10/finance/quoteSummary/{ticker}",
+                    params=params,
+                    timeout=15,
+                )
+                data = r.json()
+                result = data.get("quoteSummary", {}).get("result", [])
+            except Exception as exc:
+                log.warning("fundamentals_retry_failed", ticker=ticker, error=str(exc))
+                return {"ticker": ticker, "error": "retry failed"}
+
+            if not result:
+                return {"ticker": ticker, "error": "no data after retry"}
 
         item = result[0]
         sd = item.get("summaryDetail", {})
@@ -325,7 +376,7 @@ def fetch_company_info(ticker: str) -> dict:
         return {}
     try:
         _warm_session(ticker)
-        crumb = _get_crumb()
+        crumb = _get_valid_crumb(ticker)
         params: dict = {"modules": "assetProfile"}
         if crumb:
             params["crumb"] = crumb
@@ -338,7 +389,11 @@ def fetch_company_info(ticker: str) -> dict:
         result = data.get("quoteSummary", {}).get("result", [])
         if not result:
             return {}
-        ap = result[0].get("assetProfile", {})
+        ap = (
+            result[0].get("assetProfile")
+            or result[0].get("summaryProfile")
+            or {}
+        )
         if not ap:
             return {}
         return {
@@ -393,3 +448,75 @@ def fetch_sector_etfs() -> list[dict]:
         except Exception:
             continue
     return results
+
+
+# ── SEC Filings (EDGAR) ────────────────────────────────────────────────
+
+def fetch_filings(ticker: str, count: int = 10) -> list[dict]:
+    """
+    Fetch latest SEC filings (10-K, 10-Q, 8-K etc.) from EDGAR for a ticker.
+    Works via company CIK lookup → filings feed.
+    """
+
+    if not _AVAILABLE:
+        return []
+
+    try:
+        import json
+        import xml.etree.ElementTree as ET
+
+        headers = {
+            "User-Agent": "FinoraAI/1.0 (contact: support@finora.ai)"
+        }
+
+        # 1. Get ticker → CIK mapping
+        mapping_url = "https://www.sec.gov/files/company_tickers.json"
+        r = _session.get(mapping_url, headers=headers, timeout=15)
+
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+
+        cik = None
+        ticker = ticker.upper()
+
+        for _, v in data.items():
+            if v.get("ticker", "").upper() == ticker:
+                cik = str(v.get("cik_str")).zfill(10)
+                break
+
+        if not cik:
+            return []
+
+        # 2. Pull filings feed
+        feed_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        r = _session.get(feed_url, headers=headers, timeout=15)
+
+        if r.status_code != 200:
+            return []
+
+        filings = r.json().get("filings", {}).get("recent", {})
+
+        forms = filings.get("form", [])
+        dates = filings.get("filingDate", [])
+        accession = filings.get("accessionNumber", [])
+        primary_docs = filings.get("primaryDocument", [])
+
+        results = []
+
+        for i in range(min(count, len(forms))):
+            results.append({
+                "ticker": ticker,
+                "form": forms[i],
+                "filing_date": dates[i],
+                "accession_number": accession[i],
+                "document": primary_docs[i],
+                "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession[i].replace('-', '')}/{primary_docs[i]}",
+            })
+
+        return results
+
+    except Exception as exc:
+        log.warning("filings_fetch_failed", ticker=ticker, error=str(exc))
+        return []

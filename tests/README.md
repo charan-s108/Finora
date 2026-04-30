@@ -112,13 +112,13 @@ npm test -- --watch
 
 **Live backend. 33 queries × 2 modes. 12 behavioral categories. Full guardrail + hallucination validation.**
 
-**Requires:** Running backend (`uvicorn main:app --port 7860`)
+**Requires:** Running backend (`uvicorn backend.main:app --port 7860`)
 
 ```bash
 cd backend
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py  # or: uvicorn main:app --port 7860
+python main.py  # or: uvicorn backend.main:app --port 7860
 
 # In another terminal:
 cd backend
@@ -223,19 +223,19 @@ pip install -r requirements-dev.txt  # includes ragas==0.2.5, datasets==3.1.0
 
 ```bash
 # Evaluate news collection (4 tickers, 5 QA pairs each = 20 total)
-python scripts/eval_rag.py \
+python backend/scripts/eval_rag.py \
   --tickers AAPL MSFT NVDA RELIANCE.NS \
   --collection news \
   --n 5
 
 # Evaluate historical collection (10 pairs per ticker)
-python scripts/eval_rag.py \
+python backend/scripts/eval_rag.py \
   --tickers AAPL MSFT RELIANCE.NS \
   --collection historical \
   --n 10
 
 # Timestamped output
-python scripts/eval_rag.py \
+python backend/scripts/eval_rag.py \
   --tickers AAPL MSFT NVDA META RELIANCE INFY \
   --collection historical \
   --n 3 \
@@ -411,7 +411,7 @@ export PYTHONPATH=/path/to/backend:$PYTHONPATH
 ```
 
 ### Stress tests hanging
-- Ensure backend is running: `uvicorn main:app --port 7860`
+- Ensure backend is running: `uvicorn backend.main:app --port 7860`
 - Check `FINORA_BACKEND_URL` env var: `echo $FINORA_BACKEND_URL`
 - Verify backend is healthy: `curl http://localhost:7860/api/health`
 

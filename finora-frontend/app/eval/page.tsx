@@ -184,7 +184,7 @@ export default async function EvalPage() {
             <div className="rounded-lg bg-muted/40 border border-border px-4 py-3 text-left w-full max-w-md">
               <p className="text-[11px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Run from backend/</p>
               <code className="text-xs font-mono text-foreground whitespace-pre-wrap">
-                {`python scripts/eval_rag.py \\\n  --tickers AAPL RELIANCE INFY META \\\n  --collection historical --n 3`}
+                {`python backend/scripts/eval_rag.py \\\n  --tickers AAPL RELIANCE INFY META \\\n  --collection historical --n 3`}
               </code>
             </div>
           </div>

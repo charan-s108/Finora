@@ -3,8 +3,8 @@
 Seed news corpus into Qdrant (finora_news collection) via NewsAPI.
 
 Usage:
-    python scripts/ingest_news.py --tickers AAPL MSFT NVDA RELIANCE --days 7
-    python scripts/ingest_news.py --all --days 3
+    python backend/scripts/ingest_news.py --tickers AAPL MSFT NVDA RELIANCE --days 7
+    python backend/scripts/ingest_news.py --all --days 3
 """
 
 import argparse
@@ -13,9 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND = ROOT / "backend"
-
-sys.path.insert(0, str(BACKEND))
+sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
@@ -23,8 +21,7 @@ load_dotenv(ROOT / ".env")
 from backend.rag.ingestion.collections import ensure_collections, get_client
 from backend.rag.ingestion.news import ingest_ticker, ingest_universe
 
-UNIVERSE_PATH = Path(__file__).parent.parent / "data" / "universe" / "stocks.json"
-
+UNIVERSE_PATH = ROOT / "backend" / "data" / "universe" / "stocks.json"
 
 def load_universe() -> list[dict]:
     if not UNIVERSE_PATH.exists():

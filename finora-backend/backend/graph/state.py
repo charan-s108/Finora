@@ -27,6 +27,7 @@ class FiNoraState(TypedDict):
     # Retrieval outputs (parallel branches append — operator.add merges lists)
     realtime_context: dict | None
     news_chunks: Annotated[list[dict], operator.add]
+    filings_chunks: list[dict]
     historical_chunks: Annotated[list[dict], operator.add]
     fundamental_data: dict | None
     sector_context: dict | None  # sector ETF performance + similar stocks
