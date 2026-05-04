@@ -67,20 +67,26 @@ def _get_valid_crumb(ticker: str) -> str:
 
         _warm_session(ticker)
 
-        try:
-            r = _session.get(f"{_BASE2}/v1/test/getcrumb", timeout=10)
-            if r.status_code == 200 and r.text.strip():
-                _crumb = r.text.strip()
-                _crumb_ts = time.time()
-                return _crumb
-        except Exception as exc:
-            log.warning("crumb_fetch_failed", error=str(exc))
+        for base in (_BASE2, _BASE1):
+            try:
+                r = _session.get(f"{base}/v1/test/getcrumb", timeout=10)
+                if r.status_code == 200 and r.text.strip():
+                    _crumb = r.text.strip()
+                    _crumb_ts = time.time()
+                    log.info("crumb_acquired", base=base)
+                    return _crumb
+            except Exception as exc:
+                log.warning("crumb_fetch_failed", base=base, error=str(exc))
 
     raise RuntimeError("Failed to obtain Yahoo crumb")
 
 
 def _warm_session(ticker: str) -> None:
-    """One chart request primes session cookies; crumb then works."""
+    """Visit fc.yahoo.com for cookie consent, then chart to prime session."""
+    try:
+        _session.get("https://fc.yahoo.com", timeout=8)
+    except Exception:
+        pass
     try:
         _session.get(
             f"{_BASE1}/v8/finance/chart/{ticker}",
@@ -297,17 +303,16 @@ def fetch_fundamentals(ticker: str) -> dict:
     if not _AVAILABLE:
         return {"ticker": ticker, "error": "curl_cffi unavailable"}
 
+    crumb = None
     for attempt in range(2):
         try:
             crumb = _get_valid_crumb(ticker)
             break
         except Exception as exc:
-            log.warning("crumb_retry", ticker=ticker, error=str(exc))
+            log.warning("crumb_retry", ticker=ticker, attempt=attempt, error=str(exc))
             _crumb = None
 
-            if attempt == 1:
-                return {"ticker": ticker, "error": "crumb init failed"}
-
+    # proceed even with crumb=None — quoteSummary sometimes works without it
     modules = "summaryDetail,financialData,defaultKeyStatistics,recommendationTrend,assetProfile,summaryProfile,price,quoteType"
     params: dict = {"modules": modules}
     if crumb:
@@ -399,7 +404,11 @@ def fetch_company_info(ticker: str) -> dict:
         return {}
     try:
         _warm_session(ticker)
-        crumb = _get_valid_crumb(ticker)
+        crumb = None
+        try:
+            crumb = _get_valid_crumb(ticker)
+        except Exception as exc:
+            log.warning("company_info_crumb_failed", ticker=ticker, error=str(exc))
         params: dict = {"modules": "assetProfile"}
         if crumb:
             params["crumb"] = crumb
@@ -439,10 +448,17 @@ def _quotesummary(ticker: str, module: str) -> dict:
     if not _AVAILABLE:
         return {}
     try:
-        crumb = _get_valid_crumb(ticker)
+        crumb = None
+        try:
+            crumb = _get_valid_crumb(ticker)
+        except Exception as exc:
+            log.warning("quotesummary_crumb_failed", ticker=ticker, module=module, error=str(exc))
+        params: dict = {"modules": module}
+        if crumb:
+            params["crumb"] = crumb
         r = _session.get(
             f"{_BASE1}/v10/finance/quoteSummary/{ticker}",
-            params={"modules": module, "crumb": crumb},
+            params=params,
             timeout=15,
         )
         if r.status_code != 200:
