@@ -1,4 +1,4 @@
-import { formatCurrency } from "@/lib/format";
+import { currencySymbol, formatCurrency } from "@/lib/format";
 
 interface Consensus {
   buy: number;
@@ -9,9 +9,10 @@ interface Consensus {
 
 interface Props {
   consensus: Consensus | null;
+  currency?: string;
 }
 
-export function AnalystConsensus({ consensus }: Props) {
+export function AnalystConsensus({ consensus, currency = "USD" }: Props) {
   if (!consensus) {
     return (
       <div className="card-dark p-4">
@@ -29,6 +30,7 @@ export function AnalystConsensus({ consensus }: Props) {
 
   const rating = buyPct >= 60 ? "Strong Buy" : buyPct >= 40 ? "Buy" : holdPct >= 50 ? "Hold" : "Sell";
   const ratingColor = buyPct >= 60 ? "text-emerald-400" : buyPct >= 40 ? "text-emerald-400" : holdPct >= 50 ? "text-yellow-400" : "text-rose-400";
+  const sym = currencySymbol(currency);
 
   return (
     <div className="card-dark p-4 space-y-3">
@@ -67,7 +69,7 @@ export function AnalystConsensus({ consensus }: Props) {
         <div className="flex items-center justify-between pt-1 border-t border-border">
           <span className="text-xs text-muted-foreground">Avg. Price Target</span>
           <span className="text-sm font-semibold font-mono text-foreground">
-            {formatCurrency(avg_target)}
+            {sym}{avg_target.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
         </div>
       )}

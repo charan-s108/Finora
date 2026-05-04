@@ -25,28 +25,23 @@ async function getQuotes(): Promise<Quote[]> {
   if (_cache) return _cache;
   if (_inflight) return _inflight;
 
-  _inflight = Promise.allSettled(
-    TICKERS.map(async (ticker) => {
-      const res = await fetch(`/api/stocks/${encodeURIComponent(ticker)}`);
-      if (!res.ok) return null;
-      const d = await res.json();
-      if (d.price == null) return null;
-      return {
-        ticker: d.ticker ?? ticker,
-        price: d.price as number,
-        pct_change: (d.pct_change as number) ?? 0,
-        currency: (d.currency as string) ?? "USD",
-      };
+  _inflight = fetch(`/api/stocks/batch-quotes?tickers=${TICKERS.join(",")}`)
+    .then(async (res) => {
+      if (!res.ok) return [];
+      const data = (await res.json()) as Array<{
+        ticker: string;
+        price: number | null;
+        pct_change: number | null;
+        currency: string;
+      }>;
+      return data.filter((d) => d.price != null) as Quote[];
     })
-  ).then((results) => {
-    const valid = results
-      .filter((r): r is PromiseFulfilledResult<Quote | null> => r.status === "fulfilled")
-      .map((r) => r.value)
-      .filter((v): v is Quote => v !== null);
-    _cache = valid;
-    _inflight = null;
-    return valid;
-  });
+    .catch(() => [])
+    .then((valid) => {
+      _cache = valid;
+      _inflight = null;
+      return valid;
+    });
 
   return _inflight;
 }

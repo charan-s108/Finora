@@ -18,7 +18,7 @@ export function StockHeader({ stock }: Props) {
   return (
     <div className="card-dark p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
       <div className="flex items-start gap-3 sm:gap-4">
-        <StockLogo website={stock.website} ticker={stock.ticker} size={40} className="sm:[&>img]:size-12" />
+        <StockLogo website={stock.website} ticker={stock.ticker} exchange={stock.exchange} size={40} className="sm:[&>img]:size-12" />
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-lg sm:text-2xl font-bold font-mono text-foreground">

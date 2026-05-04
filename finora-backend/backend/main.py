@@ -46,6 +46,15 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _warm_yahoo_session)
 
+    if os.getenv("METRICS_ENABLED", "false").lower() == "true":
+        try:
+            from backend.observability.metrics import start_metrics_server
+            metrics_port = int(os.getenv("METRICS_PORT", "9090"))
+            start_metrics_server(metrics_port)
+            log.info("metrics_server_started", port=metrics_port)
+        except Exception as exc:
+            log.warning("metrics_server_failed", error=str(exc))
+
     scheduler = None
     if os.getenv("ENV", "development") == "production" or os.getenv("SCHEDULER_ENABLED", "false") == "true":
         from backend.rag.ingestion.scheduler import start_scheduler

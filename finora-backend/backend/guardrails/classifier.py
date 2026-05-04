@@ -35,17 +35,69 @@ _INSIGHT_ONLY_BLOCKED = {
 _BLOCKED_INTENTS = _ALWAYS_BLOCKED | _INSIGHT_ONLY_BLOCKED
 
 _SYSTEM = """\
-You are a financial query safety classifier.
-Classify the query intent as one of:
-- allowed: fundamental_analysis, technical_analysis, news_analysis, historical_pattern,
-           sector_comparison, earnings_analysis, market_overview, screener, educational
-- blocked: direct_buy_sell_recommendation, specific_options_strategy, insider_trading_context,
-           market_manipulation, personal_financial_planning, tax_evasion_advice
+You are a financial query safety classifier for an AI financial intelligence platform.
 
-Return JSON: {"intent": "<intent>", "blocked": true/false}
-Return ONLY the JSON."""
+BLOCKED intents — ONLY queries asking for personal-specific investment decisions with personal context, or illegal advice:
+- direct_buy_sell_recommendation: queries that combine a personal position with a decision request — "I hold X shares, should I sell?", "I'm thinking of putting my savings into X, should I?", "Should I exit my position now?". NOTE: general questions like "Should I invest in X?", "Is X a good investment?", "Is it worth buying X?" are NOT blocked — they are fundamental_analysis.
+- specific_options_strategy: "Buy the $180 call", "What strike to sell?", "Roll my puts", "Which option to buy?"
+- insider_trading_context: "Before the announcement...", "I heard from someone at the company", "pre-IPO leak"
+- market_manipulation: "How to move the price", "pump and dump", "short squeeze tactics", "coordinate buying"
+- personal_financial_planning: "How much of my savings should I put in X?", "I have $50K to invest", "what percentage of my portfolio should be X?"
+- tax_evasion_advice: "How to avoid capital gains", "hide gains offshore", "not report profits"
 
-_REDIRECT_MSG = (
+ALLOWED intents — analysis, education, market information:
+- fundamental_analysis: PE, EPS, revenue, margins, debt, valuation, "is X expensive?", "what's the fair value?", "should I invest in X?", "is X a good investment?", "is X worth buying?", "is X a good long-term investment?"
+- technical_analysis: RSI, MACD, support, resistance, moving averages, chart patterns, momentum
+- news_analysis: recent news, earnings results, press releases, catalysts, "why did X move?"
+- historical_pattern: past price behavior, earnings history, historical comparisons
+- sector_comparison: peers, sector performance, "how does X compare to competitors?"
+- market_overview: index levels, macro factors, market conditions
+- screener: find stocks matching criteria
+- educational: "what does PE mean?", "how does a stock split work?"
+
+NUANCES — these are ALLOWED, not blocked:
+- "Should I invest in X?" → fundamental_analysis (investment analysis, NOT personal advice)
+- "Is X a good investment?" → fundamental_analysis
+- "Is X worth buying now?" → fundamental_analysis
+- "Should I buy X?" (without personal context) → fundamental_analysis
+- "Is X a good long-term investment?" → fundamental_analysis
+- "Is X expensive at current valuation?" → fundamental_analysis (valuation analysis, not buy advice)
+- "What's the analyst consensus on X?" → fundamental_analysis
+- "What are the risks of investing in X?" → fundamental_analysis (risk education)
+- "What do analysts think about X?" → fundamental_analysis
+- "Is this a good entry point technically?" → technical_analysis (chart analysis, not personal advice)
+- "What's the downside risk for X?" → fundamental_analysis
+
+Return ONLY valid JSON: {"intent": "<intent>", "blocked": true/false}"""
+
+_REDIRECT_MSGS: dict[str, str] = {
+    "direct_buy_sell_recommendation": (
+        "I can't tell you whether to buy or sell {ticker}, but I can show you what analysts currently "
+        "recommend and the valuation picture driving that view. Want the consensus breakdown?"
+    ),
+    "personal_financial_planning": (
+        "Allocation decisions depend on your full financial picture — a registered financial advisor "
+        "is the right call for that. I can show you how {ticker} has performed historically and what "
+        "analysts currently think about it."
+    ),
+    "specific_options_strategy": (
+        "I can't advise on specific options strategies. I can pull the underlying fundamentals, "
+        "recent volatility context, and analyst targets for {ticker} if that's useful."
+    ),
+    "insider_trading_context": (
+        "I can only work with publicly available information. I can surface the latest news, "
+        "analyst views, and disclosed filings for {ticker}."
+    ),
+    "market_manipulation": (
+        "That's outside what I can help with. I focus on public market analysis — "
+        "price action, fundamentals, and analyst views."
+    ),
+    "tax_evasion_advice": (
+        "I can't advise on tax strategies — consult a certified tax professional for that. "
+        "I'm happy to pull the market analysis and fundamentals for {ticker}."
+    ),
+}
+_REDIRECT_DEFAULT = (
     "I can't make specific investment recommendations, but I can pull what analysts "
     "currently say about {ticker} and the key metrics to consider. "
     "Want me to surface the consensus view and recent developments?"
@@ -89,7 +141,7 @@ def guardrail_check_node(state: FiNoraState) -> dict:
     log.info("guardrail_check", query=query[:60], blocked=blocked, intent=intent, user_mode=user_mode)
 
     if blocked:
-        redirect = _REDIRECT_MSG.format(ticker=ticker)
+        redirect = _REDIRECT_MSGS.get(intent, _REDIRECT_DEFAULT).format(ticker=ticker)
         disclaimer = get_disclaimer(os.getenv("DISCLAIMER_LOCALE", "IN"))
         return {
             "guardrail_blocked": True,

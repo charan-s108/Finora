@@ -1,15 +1,29 @@
 "use client";
 
+import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExternalLink, Sparkles } from "lucide-react";
 import { FinoraIcon } from "@/components/ui/FinoraIcon";
-import type { ChatMessage as ChatMessageType } from "@/lib/streaming";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import type { ChatMessage as ChatMessageType, FinanceBar } from "@/lib/streaming";
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 interface Props {
   message: ChatMessageType;
 }
+
+function formatCitationTime(time: string | undefined): string {
+  if (!time) return "";
+  const date = new Date(time);
+  if (isNaN(date.getTime())) return time;
+  const diff = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+const OrderedContext = React.createContext(false);
 
 function MarkdownContent({ content }: { content: string }) {
   return (
@@ -17,23 +31,38 @@ function MarkdownContent({ content }: { content: string }) {
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => (
-          <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
+          <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>
         ),
         strong: ({ children }) => (
-          <strong className="font-semibold text-foreground">{children}</strong>
+          <strong className="font-semibold text-primary/90 tracking-wide">{children}</strong>
         ),
         ul: ({ children }) => (
-          <ul className="mb-2 space-y-1 pl-3">{children}</ul>
+          <OrderedContext.Provider value={false}>
+            <ul className="mb-2 space-y-1 pl-3">{children}</ul>
+          </OrderedContext.Provider>
         ),
         ol: ({ children }) => (
-          <ol className="mb-2 space-y-1 pl-3 list-decimal">{children}</ol>
+          <OrderedContext.Provider value={true}>
+            <ol className="mb-2 space-y-1 pl-5 list-decimal [&>li]:list-item">{children}</ol>
+          </OrderedContext.Provider>
         ),
-        li: ({ children }) => (
-          <li className="flex gap-2 text-sm leading-relaxed">
-            <span className="text-primary mt-1.5 flex-shrink-0">•</span>
-            <span>{children}</span>
-          </li>
-        ),
+        li: ({ children }) => {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const isOrdered = React.useContext(OrderedContext);
+          if (isOrdered) {
+            return (
+              <li className="text-sm leading-relaxed marker:text-muted-foreground/70">
+                {children}
+              </li>
+            );
+          }
+          return (
+            <li className="flex gap-2 text-sm leading-relaxed list-none">
+              <span className="text-primary mt-1.5 flex-shrink-0">•</span>
+              <span>{children}</span>
+            </li>
+          );
+        },
         h2: ({ children }) => (
           <h2 className="text-sm font-semibold text-foreground mb-1.5 mt-3 first:mt-0 border-b border-border pb-1">
             {children}
@@ -132,6 +161,41 @@ function PriceChart({ chartData }: { chartData: NonNullable<ChatMessageType["cha
   );
 }
 
+function FinanceBarChart({ financeChartData }: { financeChartData: NonNullable<ChatMessageType["financeChartData"]> }) {
+  const { bars, currency } = financeChartData;
+  if (!bars.length) return null;
+  const sym = currency === "INR" ? "₹" : "$";
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-background/50 p-2.5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Revenue & Net Income (Billions)</span>
+        <span className="text-[10px] text-muted-foreground/60">{sym}B</span>
+      </div>
+      <ResponsiveContainer width="100%" height={100}>
+        <BarChart data={bars} margin={{ top: 2, right: 4, left: 4, bottom: 2 }} barGap={2}>
+          <XAxis dataKey="period" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+          <YAxis hide />
+          <Tooltip
+            contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }}
+            formatter={(val: number, name: string) => [`${sym}${val}B`, name === "revenue" ? "Revenue" : "Net Income"]}
+          />
+          <Bar dataKey="revenue" fill="hsl(var(--primary))" opacity={0.7} radius={[3, 3, 0, 0]} maxBarSize={28} />
+          <Bar dataKey="net_income" fill="#22c55e" opacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="flex gap-3 mt-1.5 justify-end">
+        <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
+          <span className="w-2 h-2 rounded-sm bg-primary/70 inline-block" />Revenue
+        </span>
+        <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
+          <span className="w-2 h-2 rounded-sm bg-emerald-500/80 inline-block" />Net Income
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function ChatMessage({ message }: Props) {
   const isUser = message.role === "user";
 
@@ -175,23 +239,28 @@ export function ChatMessage({ message }: Props) {
             <>
               <MarkdownContent content={message.content || ""} />
               {message.chartData && <PriceChart chartData={message.chartData} />}
+              {message.financeChartData && <FinanceBarChart financeChartData={message.financeChartData} />}
             </>
           )}
         </div>
 
         {message.citations && message.citations.length > 0 && (
           <div className="mt-2 space-y-1">
-            {message.citations.slice(0, 3).map((c, i) => (
+            {message.citations.slice(0, 4).map((c, i) => (
               <a
                 key={i}
                 href={c.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors group"
               >
-                <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                <span className="truncate">{c.title}</span>
-                {c.time && <span className="text-muted-foreground/60">· {c.time}</span>}
+                <ExternalLink className="w-3 h-3 flex-shrink-0 opacity-50 group-hover:opacity-100" />
+                <span className="truncate flex-1">{c.title}</span>
+                <span className="flex items-center gap-1 flex-shrink-0 text-[10px] text-muted-foreground/50">
+                  {c.source && <span>{c.source}</span>}
+                  {c.source && c.time && <span>·</span>}
+                  {c.time && <span>{formatCitationTime(c.time)}</span>}
+                </span>
               </a>
             ))}
           </div>

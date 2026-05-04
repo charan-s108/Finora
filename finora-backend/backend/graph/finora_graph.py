@@ -22,6 +22,7 @@ from backend.graph.nodes.fundamentals_node import fundamentals_node
 from backend.graph.nodes.historical_rag_node import historical_rag_node
 from backend.graph.nodes.intent_classifier import intent_classifier_node
 from backend.graph.nodes.filings_rag_node import filings_rag_node
+from backend.graph.nodes.financials_rag_node import financials_rag_node
 from backend.graph.nodes.news_rag_node import news_rag_node
 from backend.graph.nodes.realtime_node import realtime_node
 from backend.graph.nodes.response_node import response_node
@@ -42,6 +43,7 @@ async def parallel_retrieval_node(state: FiNoraState) -> dict:
         historical_rag_node(state),
         fundamentals_node(state),
         filings_rag_node(state),
+        financials_rag_node(state),
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -50,6 +52,7 @@ async def parallel_retrieval_node(state: FiNoraState) -> dict:
         "news_chunks": [],
         "historical_chunks": [],
         "filings_chunks": [],
+        "financials_chunks": [],
         "fundamental_data": None,
         "sector_context": None,
         "retrieval_scores": {},
@@ -59,7 +62,7 @@ async def parallel_retrieval_node(state: FiNoraState) -> dict:
             log.error("parallel_retrieval_branch_failed", error=str(r))
             continue
         for key, val in r.items():
-            if key in ("news_chunks", "historical_chunks", "filings_chunks"):
+            if key in ("news_chunks", "historical_chunks", "filings_chunks", "financials_chunks"):
                 merged[key] = merged.get(key, []) + (val or [])
             elif key == "retrieval_scores":
                 merged["retrieval_scores"].update(val or {})

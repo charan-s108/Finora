@@ -9,6 +9,8 @@ export type SSEEventType =
   | "citation"
   | "disclaimer"
   | "chart_data"
+  | "finance_chart"
+  | "suggestions"
   | "done"
   | "error";
 
@@ -27,17 +29,25 @@ export interface PriceBar {
 
 export type UserMode = "insight" | "trader";
 
+export interface FinanceBar {
+  period: string;
+  revenue: number;
+  net_income: number | null;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  isAutoSummary?: boolean;   // true for the opening narrative — no user bubble shown
-  citations?: Array<{ url: string; title: string; time?: string }>;
+  isAutoSummary?: boolean;
+  citations?: Array<{ url: string; title: string; time?: string; source?: string }>;
   disclaimer?: string;
   confidence?: number;
   intents?: string[];
   isStreaming?: boolean;
   chartData?: { ticker: string; currency: string; label: string; bars: PriceBar[] };
+  financeChartData?: { ticker: string; currency: string; bars: FinanceBar[] };
+  followupSuggestions?: string[];
   traceUrl?: string;
 }
 

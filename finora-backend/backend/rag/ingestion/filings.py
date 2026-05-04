@@ -89,26 +89,90 @@ def _get_recent_filings(cik: str, max_filings: int = 3) -> list[dict]:
         return []
 
 
-def _fetch_filing_text(cik: str, accession: str, primary_doc: str) -> str:
-    url = f"https://www.sec.gov/Archives/edgar/full-index/{cik[:4]}/{cik[4:]}"
-    # Direct document URL
+# Sections worth extracting per form type — everything else is boilerplate
+_TARGET_SECTIONS: dict[str, list[tuple[str, str]]] = {
+    "10-K": [
+        ("business",      r"item\s+1[\.\s]+business\b"),
+        ("risk_factors",  r"item\s+1a[\.\s]+risk\s+factor"),
+        ("mda",           r"item\s+7[\.\s]+management.{0,60}discussion"),
+        ("market_risk",   r"item\s+7a[\.\s]+quantitative"),
+    ],
+    "10-Q": [
+        ("mda",           r"item\s+2[\.\s]+management.{0,60}discussion"),
+        ("market_risk",   r"item\s+3[\.\s]+quantitative"),
+    ],
+}
+
+# Human-readable labels for section metadata
+_SECTION_LABELS = {
+    "business":     "Business Description",
+    "risk_factors": "Risk Factors",
+    "mda":          "Management Discussion & Analysis",
+    "market_risk":  "Market Risk",
+}
+
+_NEXT_ITEM = re.compile(r"\bitem\s+\d+[a-z]?[\.\s]", re.IGNORECASE)
+
+
+def _clean_html(raw: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", raw)
+    text = re.sub(r"&[a-z]{2,6};", " ", text)
+    text = re.sub(r"\s{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _extract_sections(raw: str, form_type: str) -> list[dict]:
+    """
+    Parse filing text and return only high-value sections tagged by name.
+    Falls back to full text (truncated) if no sections matched.
+    """
+    text = _clean_html(raw) if ("<html" in raw.lower()) else raw
+    text_lower = text.lower()
+
+    patterns = _TARGET_SECTIONS.get(form_type, _TARGET_SECTIONS["10-K"])
+    found: list[tuple[int, str, str]] = []  # (start_pos, section_key, label)
+
+    for key, pattern in patterns:
+        for m in re.finditer(pattern, text_lower):
+            found.append((m.end(), key, _SECTION_LABELS[key]))
+            break  # first match only — skip table-of-contents repeats by taking the last match
+
+    # Re-run taking the LAST occurrence of each key (skips TOC, hits actual section)
+    found_last: dict[str, tuple[int, str]] = {}
+    for key, pattern in patterns:
+        matches = list(re.finditer(pattern, text_lower))
+        if matches:
+            m = matches[-1]
+            found_last[key] = (m.end(), _SECTION_LABELS[key])
+
+    if not found_last:
+        # No sections detected — fall back to first 6000 words
+        words = text.split()
+        return [{"section": "full_text", "label": "Filing Text", "text": " ".join(words[:6000])}]
+
+    # Sort by position, extract text up to the next known section start
+    ordered = sorted(found_last.items(), key=lambda x: x[1][0])
+    result = []
+    for i, (key, (start, label)) in enumerate(ordered):
+        end = ordered[i + 1][1][0] if i + 1 < len(ordered) else len(text)
+        section_text = text[start:end].strip()
+        # Cap each section at 4000 words to avoid embedding huge chunks
+        words = section_text.split()
+        if len(words) > 4000:
+            section_text = " ".join(words[:4000])
+        if len(section_text) > 300:
+            result.append({"section": key, "label": label, "text": section_text})
+
+    return result if result else [{"section": "full_text", "label": "Filing Text",
+                                   "text": " ".join(text.split()[:6000])}]
+
+
+def _fetch_raw_filing(cik: str, accession: str, primary_doc: str) -> str:
     filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{primary_doc}"
     try:
         resp = requests.get(filing_url, headers=_HEADERS, timeout=30)
         resp.raise_for_status()
-
-        # Strip HTML tags if present
-        text = resp.text
-        if "<html" in text.lower() or "<HTML" in text:
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = re.sub(r"&[a-z]+;", " ", text)
-            text = re.sub(r"\s{3,}", "\n\n", text)
-
-        words = text.split()
-        if len(words) > 8000:
-            text = " ".join(words[:8000])
-
-        return text.strip()
+        return resp.text
     except Exception as exc:
         log.error("edgar_filing_download_failed", url=filing_url, error=str(exc))
         return ""
@@ -144,39 +208,45 @@ def ingest_ticker(
     total_chunks = 0
     for filing in filings:
         time.sleep(1)
-        text = _fetch_filing_text(filing["cik"], filing["accession"], filing["primary_doc"])
-        if len(text) < 500:
+        raw = _fetch_raw_filing(filing["cik"], filing["accession"], filing["primary_doc"])
+        if len(raw) < 500:
             continue
 
-        meta = {
-            "ticker": ticker,
-            "filing_type": filing["form"],
-            "period": filing["date"],
-            "cik": filing["cik"],
-            "accession": filing["accession"],
-            "source": "sec_edgar",
-        }
-        chunks = _chunker.chunk(text, metadata=meta)
-        if not chunks:
-            continue
+        sections = _extract_sections(raw, filing["form"])
+        filing_points: list[PointStruct] = []
 
-        texts = [ch.text for ch in chunks]
-        vectors = embed_batch(texts)
+        for sec in sections:
+            base_meta = {
+                "ticker": ticker,
+                "filing_type": filing["form"],
+                "period": filing["date"],
+                "cik": filing["cik"],
+                "accession": filing["accession"],
+                "section": sec["section"],
+                "section_label": sec["label"],
+                "source": "sec_edgar",
+            }
+            chunks = _chunker.chunk(sec["text"], metadata=base_meta)
+            if not chunks:
+                continue
 
-        points = [
-            PointStruct(
-                id=str(uuid.uuid5(
-                    uuid.NAMESPACE_DNS,
-                    f"{ticker}:{filing['accession']}:{i}",
-                )),
-                vector=vec,
-                payload={**ch.metadata, "text": ch.text, "data_type": "filing"},
-            )
-            for i, (ch, vec) in enumerate(zip(chunks, vectors))
-        ]
+            texts = [ch.text for ch in chunks]
+            vectors = embed_batch(texts)
 
-        c.upsert(collection_name=col, points=points)
-        total_chunks += len(points)
-        log.info("filing_ingest_done", ticker=ticker, form=filing["form"], chunks=len(points))
+            for i, (ch, vec) in enumerate(zip(chunks, vectors)):
+                filing_points.append(PointStruct(
+                    id=str(uuid.uuid5(
+                        uuid.NAMESPACE_DNS,
+                        f"{ticker}:{filing['accession']}:{sec['section']}:{i}",
+                    )),
+                    vector=vec,
+                    payload={**ch.metadata, "text": ch.text, "data_type": "filing"},
+                ))
+
+        if filing_points:
+            c.upsert(collection_name=col, points=filing_points)
+            total_chunks += len(filing_points)
+            log.info("filing_ingest_done", ticker=ticker, form=filing["form"],
+                     sections=len(sections), chunks=len(filing_points))
 
     return total_chunks

@@ -172,9 +172,9 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
                 log.info("early_cache_hit", ticker=req.ticker, session=req.session_id)
                 yield _sse({"type": "guardrail", "status": "allowed"})
                 yield _sse({"type": "intent", "intents": []})
-                sentences = _cached_text.split(". ")
-                for i, sent in enumerate(sentences):
-                    content = sent + (". " if i < len(sentences) - 1 else "")
+                lines = _cached_text.split("\n")
+                for i, line in enumerate(lines):
+                    content = line + ("\n" if i < len(lines) - 1 else "")
                     yield _sse({"type": "token", "content": content})
                 yield _sse({"type": "done", "trace_id": trace_id, "confidence": 0.0, "cached": True})
                 return
@@ -214,11 +214,15 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
 
             elif node_name == "response_node":
                 response = node_output.get("response", "")
-                # Stream sentence-by-sentence for smooth rendering
-                sentences = response.split(". ")
-                for i, sent in enumerate(sentences):
-                    content = sent + (". " if i < len(sentences) - 1 else "")
+                # Stream line-by-line — preserves markdown structure (## headers, bullets)
+                lines = response.split("\n")
+                for i, line in enumerate(lines):
+                    content = line + ("\n" if i < len(lines) - 1 else "")
                     yield _sse({"type": "token", "content": content})
+                # Follow-up suggestions
+                suggestions = node_output.get("followup_questions") or []
+                if suggestions:
+                    yield _sse({"type": "suggestions", "questions": suggestions})
 
         # Final state — emit citations, disclaimer, done
         final = await graph.aget_state(config)
@@ -245,13 +249,22 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
         if disclaimer:
             yield _sse({"type": "disclaimer", "text": disclaimer})
 
-        # Emit 30-day price chart only when visually meaningful
+        # Price chart — line chart for price/movement queries only
+        # Suppressed for single-fact questions (P/E, price, margin, "should I invest", etc.)
+        _SINGLE_FACT_STARTERS = ("what is", "what's", "what are", "how much", "give me the",
+                                  "tell me the", "should i", "is it", "is this", "am i")
+        _ql = req.query.lower().strip()
+        _is_single_fact = (
+            len(req.query.split()) <= 12
+            and any(_ql.startswith(p) for p in _SINGLE_FACT_STARTERS)
+        )
         _chart_intents = {"real_time", "historical"}
         _chart_keywords = {"chart", "price", "movement", "trend", "performance", "summarize",
-                           "visualize", "graph", "history", "drop", "rise", "fell", "rally",
-                           "crash", "surge", "spike", "decline", "week", "month", "year",
-                           "today", "yesterday", "52", "high", "low", "range"}
-        _should_chart = bool(
+                           "visualize", "graph", "drop", "rise", "fell", "rally", "crash",
+                           "surge", "spike", "decline", "week", "month", "year", "today",
+                           "yesterday", "52", "high", "low", "range", "how has", "how did",
+                           "historical", "overview", "analyse", "analyze", "tell me about"}
+        _should_chart = not _is_single_fact and bool(
             _active_intents & _chart_intents
             or _query_words & _chart_keywords
         )
@@ -294,6 +307,46 @@ async def _stream_graph(req: ChatRequest) -> AsyncIterator[str]:
                     })
             except Exception as chart_exc:
                 log.debug("chart_data_fetch_failed", error=str(chart_exc))
+
+        # Finance bar chart — only for multi-year financial comparisons or full summaries
+        # NOT for single-metric, opinion, news, or short factual questions
+        _SUMMARY_TRIGGERS = frozenset({
+            "summarize", "summary", "overview", "analyse", "analyze",
+            "tell me about", "breakdown", "what do you think", "how is", "how's",
+        })
+        _FINANCE_HISTORY_TRIGGERS = frozenset({
+            "revenue", "income", "profit", "earnings history", "annual revenue",
+            "annual income", "annual profit", "fiscal year", "financial performance",
+            "financial history", "balance sheet", "cash flow", "how has", "how did",
+            "over the years", "growth rate", "projected growth", "financial trend",
+        })
+        _is_summary = any(w in _ql for w in _SUMMARY_TRIGGERS)
+        _is_finance_history = any(w in _ql for w in _FINANCE_HISTORY_TRIGGERS)
+        _should_finance_chart = (_is_summary or _is_finance_history) and not _is_single_fact
+        if _should_finance_chart:
+            _fd = final_vals.get("fundamental_data") or {}
+            _income = _fd.get("annual_income") or []
+            if len(_income) >= 2:
+                currency = initial_state.get("currency", "USD")
+                _bars = []
+                for r in reversed(_income[:5]):
+                    period = r.get("period", "")
+                    fy = f"FY{period[:4]}" if period else "?"
+                    rev = r.get("revenue")
+                    ni = r.get("net_income")
+                    if rev is not None:
+                        _bars.append({
+                            "period": fy,
+                            "revenue": round(rev / 1e9, 1),
+                            "net_income": round(ni / 1e9, 1) if ni is not None else None,
+                        })
+                if _bars:
+                    yield _sse({
+                        "type": "finance_chart",
+                        "ticker": req.ticker,
+                        "currency": currency,
+                        "bars": _bars,
+                    })
 
         confidence = final_vals.get("confidence_score", 0.0)
         trace_id = final_vals.get("trace_id", req.session_id[:8])

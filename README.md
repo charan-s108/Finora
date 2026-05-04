@@ -35,7 +35,7 @@ Finora is a **production-grade AI equities intelligence platform** built for NRI
 **Two products in one:**
 
 - **Dashboard** — Premium dark-mode stock intelligence UI covering 555+ stocks (S&P 500 + NIFTY 50). Real-time price, fundamentals, analyst consensus, 20-year historical patterns, live news RAG, and candlestick charts with 9 timeframes.
-- **Finora AI** — Bottom-right floating chatbot with two user modes. Routes every query through a five-layer retrieval system: live market data, 20yr OHLCV patterns, news RAG, SEC filings, and structured fundamentals — fused, reranked, then sent to Groq. Every run traced in LangSmith.
+- **Finora AI** — Bottom-right floating chatbot with two user modes. Routes every query through a five-layer retrieval system: live market data, 20yr OHLCV patterns, news RAG, SEC filings, and structured fundamentals — fused, reranked, then sent to an intent-routed response engine. Every run traced in LangSmith.
 
 ---
 
@@ -92,18 +92,89 @@ Maximal Marginal Relevance (λ=0.6) ensures final TOP_K chunks are both relevant
 
 ---
 
+## Intent-Routed Response Engine
+
+Every query is not only routed through RAG layers — it is also classified into a **response intent** that selects the system prompt, token budget, and post-processing pipeline. This is independent of the RAG intent classification.
+
+### Response Intents
+
+| Intent | Triggers | Token Budget | Behavior |
+|---|---|---|---|
+| `metric` | Single financial fact — PE, EPS, price, yield | 400 | Returns the value with units. No narrative filler. Falls back gracefully when data is missing. |
+| `explain` | "What is...", "How does...work", "Define..." | 600 | Clean educational explanation. Bypasses directional mode reasoning — concept definitions don't need a bullish/bearish stance. |
+| `trade` | "Should I buy/sell", "entry point", "short this" | 800 | Mode-aware directional signal with risk context. Insight → redirects. Trader → explicit signal framing. |
+| `summarize` | Everything else — analysis, overview, section queries | 1200–2500 | Full structured narrative with relevant sections. Section-focused queries trigger sub-intent narrowing (see below). |
+
+### Sub-Intent Section Detection
+
+Within `summarize`, Finora narrows the response to exactly the sections the user asked about:
+
+```
+"Apple risks"              → ## Key Risks only
+"Apple valuation"          → ## Valuation only
+"Apple valuation and risks"→ ## Valuation + ## Key Risks
+"Apple cash flow"          → ## Cash Flow Generation only
+"Apple latest news"        → ## Recent Drivers & News only
+"Apple historical pattern" → ## Historical Parallels only
+```
+
+**Section keywords** are matched across 9 topic areas: `risks · business · cashflow · balance sheet · valuation · analyst · catalysts · historical · news`
+
+**Semantic expansion** handles paraphrased intent without extra LLM calls:
+- "downside", "go wrong", "threat" → `risks`
+- "cheap", "expensive", "priced" → `valuation`
+
+**Full-analysis override:** When the query contains "analyze", "analysis", "deep dive", or "full analysis", section narrowing is suppressed even if section keywords appear — *"Apple looks expensive but growing fast — analyze"* produces a full multi-section summary, not just the valuation section.
+
+### Hard Section Enforcement
+
+The LLM is instructed to generate only the requested sections via a `CRITICAL FOCUS` block injected before the output template. A post-processing filter (`_enforce_sections`) then strips any `##` headers that fall outside the requested set — LLM compliance is not trusted for this constraint.
+
+### RAG Data Layer Routing
+
+Both mode system prompts include explicit `DATA LAYERS` routing tables that tell the LLM which RAG layer maps to which output section:
+
+```
+[REAL-TIME]     → Current Price & Movement, Today's Story
+[NEWS]          → Recent Drivers & News, Catalysts
+[HISTORICAL]    → Historical Parallels (MUST include if present)
+[FUNDAMENTALS]  → Valuation, Business Model, Cash Flow, Balance Sheet
+```
+
+This prevents the LLM from inventing data for a section when that layer returned nothing — it knows to skip the section rather than hallucinate.
+
+### Token Budget Management
+
+All token budgets include a **20% buffer** applied at runtime: `max_tokens = int(max_tokens * 1.2)`. This prevents mid-sentence truncation on responses that slightly exceed the base limit. Multi-section queries use the maximum token budget across all requested sections.
+
+### Graceful Terminal Fallback
+
+When the output guardrail or section enforcement reduces the response below the minimum threshold, the system extracts readable lines from `fused_context` and returns a partial-data answer rather than a dead-end error message.
+
+### Follow-up Suggestions
+
+Every response (all intents including metric) includes 3 follow-up question chips after the answer — max 8 words each, covering different angles. Suggestions are extracted from a `---SUGGESTIONS---` delimiter in the LLM output and passed as a separate SSE event to the frontend.
+
+---
+
 ## Chat Features
 
 - **INSIGHT / TRADER mode toggle** — in chat panel header; drives entire response behavior
 - **Streaming SSE** — token-by-token with intent badges shown during retrieval
+- **Intent-routed response engine** — metric / explain / trade / summarize with per-intent prompts and token budgets
+- **Multi-section sub-intent detection** — "Apple valuation and risks" → two sections, not one
+- **Full-analysis override** — explicit "analyze" / "deep dive" queries always produce full summaries
 - **"Summarize this stock" chip** — prominent primary chip; triggers full structured narrative across all 4 RAG branches
-- **Context-aware suggestion chips** — dynamic follow-up chips per ticker intent
+- **Context-aware suggestion chips** — 3 follow-up questions on every response, auto-generated, max 8 words
 - **Narrative-first structure** — every response leads with the dominant signal, not a generic opening
 - **Guardrail redirects** — INSIGHT mode buy/sell queries get signal context + exact disclaimer phrase, never a refusal
 - **Conversation memory** — last 4 turns injected into fusion prompt for contextual follow-ups
-- **Dynamic price charts** — embedded Recharts AreaChart matched to the query timeframe
+- **Dynamic price charts** — embedded Recharts AreaChart matched to the query timeframe (1D intraday through ALL 20yr)
+- **Finance bar charts** — Revenue vs Net Income over 5 fiscal years, shown on financial history queries
 - **Smart citations** — news sources shown only on queries with news/movement intent
-- **SEBI/SEC disclaimers** — auto-injected, locale-aware
+- **SEBI/SEC disclaimers** — auto-injected, locale-aware, only on directional language
+- **Early response cache** — TTL-based cache bypasses the full graph on repeated queries
+- **LangSmith trace link** — every response includes a clickable ↗ trace link in the UI
 
 ---
 
@@ -112,10 +183,11 @@ Maximal Marginal Relevance (λ=0.6) ensures final TOP_K chunks are both relevant
 | Layer | Technology |
 |---|---|
 | **Frontend** | Next.js 14 App Router · TypeScript · Tailwind CSS · shadcn/ui |
-| **Charts** | Recharts — candlestick OHLCV + dynamic chat area charts |
+| **Charts** | Recharts — candlestick OHLCV + dynamic chat area charts + finance bar charts |
 | **Backend** | FastAPI · Python 3.11 · Pydantic v2 · Uvicorn |
 | **Agent Graph** | LangGraph 0.2 StateGraph — parallel branches, typed state |
 | **RAG** | LangChain v0.3 · Hybrid BM25+Dense · HyDE · Cohere rerank · BAAI fallback |
+| **Response Engine** | Intent-routed prompts · Multi-section detection · Hard section enforcement · Token buffering |
 | **Observability** | LangSmith — every graph run traced |
 | **RAG Evaluation** | RAGAS 0.2.5 — faithfulness, answer relevancy, context recall, context precision, noise sensitivity |
 | **LLM Primary** | Groq `llama-3.3-70b-versatile` — response generation |
@@ -127,8 +199,8 @@ Maximal Marginal Relevance (λ=0.6) ensures final TOP_K chunks are both relevant
 | **News** | Google News RSS — live, locale-aware (NSE/BSE for Indian stocks) |
 | **Historical** | 20yr weekly OHLCV via Yahoo Finance → FinancialEventChunker → Qdrant |
 | **Scheduling** | APScheduler — news every 15min, historical daily |
-| **Guardrails** | `llama-3.1-8b` input classifier + mode-aware blocked intents + output hallucination check + PII scrub |
-| **Deploy** | Vercel (frontend) · HuggingFace (backend) |
+| **Guardrails** | `llama-3.1-8b` input classifier + mode-aware blocked intents + hallucination check + PII scrub |
+| **Deploy** | Vercel (frontend) · HuggingFace Spaces Docker (backend) |
 
 ---
 
@@ -141,206 +213,74 @@ finora/
 ├── finora-backend
 │   ├── backend
 │   │   ├── api
-│   │   │   ├── __init__.py
 │   │   │   ├── middleware
 │   │   │   │   ├── guardrails.py
-│   │   │   │   ├── __init__.py
 │   │   │   │   └── rate_limit.py
 │   │   │   └── routes
-│   │   │       ├── chat.py
+│   │   │       ├── chat.py           ← SSE streaming, chart data, citation gating
 │   │   │       ├── health.py
-│   │   │       ├── __init__.py
 │   │   │       └── stocks.py
 │   │   ├── data
-│   │   │   ├── eval_results
-│   │   │   │   ├── latest.json
-│   │   │   │   ├── ragas_20260426.json
-│   │   │   │   ├── ragas_20260426_v3.json
-│   │   │   │   └── ragas_20260426_v4.json
-│   │   │   └── universe
-│   │   │       └── stocks.json
+│   │   │   ├── eval_results/
+│   │   │   └── universe/stocks.json  ← 555 stocks, committed
 │   │   ├── finora_mcp
-│   │   │   ├── __init__.py
 │   │   │   ├── server.py
-│   │   │   └── tools
-│   │   │       ├── fundamentals.py
-│   │   │       ├── historical.py
-│   │   │       ├── __init__.py
-│   │   │       ├── news.py
-│   │   │       ├── quote.py
-│   │   │       └── screener.py
+│   │   │   └── tools/               ← 6 MCP tools
 │   │   ├── graph
-│   │   │   ├── finora_graph.py
-│   │   │   ├── __init__.py
-│   │   │   ├── nodes
-│   │   │   │   ├── fundamentals_node.py
-│   │   │   │   ├── fusion_node.py
-│   │   │   │   ├── historical_rag_node.py
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── intent_classifier.py
-│   │   │   │   ├── news_rag_node.py
-│   │   │   │   ├── realtime_node.py
-│   │   │   │   ├── response_cache.py
-│   │   │   │   └── response_node.py
-│   │   │   └── state.py
+│   │   │   ├── finora_graph.py       ← LangGraph StateGraph master definition
+│   │   │   ├── state.py
+│   │   │   └── nodes
+│   │   │       ├── intent_classifier.py
+│   │   │       ├── realtime_node.py
+│   │   │       ├── news_rag_node.py
+│   │   │       ├── historical_rag_node.py
+│   │   │       ├── fundamentals_node.py
+│   │   │       ├── fusion_node.py    ← Pre-computed signals, conflict detection
+│   │   │       ├── response_cache.py ← TTL-based early response cache
+│   │   │       └── response_node.py  ← Intent-routed engine, section detection
 │   │   ├── guardrails
-│   │   │   ├── classifier.py
-│   │   │   ├── disclaimers.py
-│   │   │   ├── __init__.py
-│   │   │   └── output_filter.py
-│   │   ├── __init__.py
-│   │   ├── main.py
+│   │   │   ├── classifier.py         ← llama-3.1-8b safety classifier, mode-aware
+│   │   │   ├── output_filter.py      ← Hallucination check, PII scrub, disclaimers
+│   │   │   └── disclaimers.py
 │   │   ├── observability
-│   │   │   ├── __init__.py
 │   │   │   ├── langsmith_client.py
-│   │   │   ├── langsmith_url.py
-│   │   │   └── metrics.py
-│   │   ├── rag
-│   │   │   ├── chunking
-│   │   │   │   ├── financial.py
-│   │   │   │   ├── __init__.py
-│   │   │   │   └── strategies.py
-│   │   │   ├── embedder.py
-│   │   │   ├── evaluation
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── ragas_eval.py
-│   │   │   │   └── synthetic.py
-│   │   │   ├── ingestion
-│   │   │   │   ├── collections.py
-│   │   │   │   ├── filings.py
-│   │   │   │   ├── historical.py
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── news.py
-│   │   │   │   ├── scheduler.py
-│   │   │   │   └── universe.py
-│   │   │   ├── __init__.py
-│   │   │   ├── pipeline.py
-│   │   │   ├── retrieval
-│   │   │   │   ├── deduplication.py
-│   │   │   │   ├── hybrid.py
-│   │   │   │   ├── hyde.py
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── reranker.py
-│   │   │   │   └── router.py
-│   │   │   └── yahoo_client.py
-│   │   └── scripts
-│   │       ├── build_universe.py
-│   │       ├── eval_rag.py
-│   │       └── ingest_filings.py
-│   │       ├── ingest_historical.py
-│   │       └── ingest_news.py
+│   │   │   └── langsmith_url.py
+│   │   └── rag
+│   │       ├── chunking/             ← SlidingWindow, Semantic, FinancialEvent
+│   │       ├── evaluation/           ← RAGAS runner + synthetic QA generator
+│   │       ├── ingestion/            ← Historical, news, filings, universe
+│   │       ├── retrieval/            ← Hybrid, HyDE, reranker, MMR dedup
+│   │       └── yahoo_client.py       ← curl_cffi Chrome TLS impersonation
+│   ├── scripts/                      ← build_universe, ingest_*, eval_rag
 │   ├── Dockerfile
-│   ├── .dockerignore
-│   ├── .env
-│   ├── .env.example
-│   ├── .gitignore
-│   ├── README.md
-│   ├── requirements-dev.txt
 │   └── requirements.txt
 ├── finora-frontend
 │   ├── app
-│   │   ├── api
-│   │   │   ├── chat
-│   │   │   │   └── route.ts
-│   │   │   └── stocks
-│   │   │       └── [ticker]
-│   │   │           └── ohlcv
-│   │   │               └── route.ts
-│   │   ├── dashboard
-│   │   │   ├── page.tsx
-│   │   │   └── [ticker]
-│   │   │       ├── error.tsx
-│   │   │       ├── loading.tsx
-│   │   │       └── page.tsx
-│   │   ├── eval
-│   │   │   └── page.tsx
-│   │   ├── icon.svg
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   └── providers.tsx
+│   │   ├── dashboard/[ticker]/page.tsx
+│   │   └── eval/page.tsx             ← RAGAS results UI
 │   ├── components
 │   │   ├── chat
+│   │   │   ├── ChatWidget.tsx        ← FAB + slide-up panel + mode toggle
+│   │   │   ├── ChatMessage.tsx       ← Markdown · AreaChart · BarChart · citations
 │   │   │   ├── ChatInput.tsx
-│   │   │   ├── ChatMessage.tsx
-│   │   │   ├── ChatWidget.tsx
-│   │   │   ├── StockSummaryCard.tsx
-│   │   │   ├── SuggestionChips.tsx
-│   │   │   └── TypingIndicator.tsx
-│   │   ├── dashboard
-│   │   │   ├── AnalystConsensus.tsx
-│   │   │   ├── FundamentalsGrid.tsx
-│   │   │   ├── HistoricalRagPanel.tsx
-│   │   │   ├── NewsRagPanel.tsx
-│   │   │   ├── PriceChart.tsx
-│   │   │   ├── SectorHeatmap.tsx
-│   │   │   ├── SimilarStocks.tsx
-│   │   │   ├── StockAbout.tsx
-│   │   │   ├── StockHeader.tsx
-│   │   │   └── StockSearch.tsx
-│   │   ├── landing
-│   │   │   ├── Features.tsx
-│   │   │   ├── Footer.tsx
-│   │   │   ├── Hero.tsx
-│   │   │   ├── MarketPulse.tsx
-│   │   │   └── Navbar.tsx
-│   │   └── ui
-│   │       ├── badge.tsx
-│   │       ├── command.tsx
-│   │       ├── FinoraIcon.tsx
-│   │       ├── skeleton.tsx
-│   │       ├── sparkline.tsx
-│   │       ├── StockLogo.tsx
-│   │       ├── ThemeToggle.tsx
-│   │       └── TickerTape.tsx
-│   ├── components.json
-│   ├── Dockerfile
-│   ├── .env
-│   ├── .env.example
-│   ├── jest.config.js
+│   │   │   └── SuggestionChips.tsx   ← Dynamic follow-up chips
+│   │   ├── dashboard/                ← StockHeader, FundamentalsGrid, PriceChart, ...
+│   │   └── ui/                       ← shadcn/ui + StockLogo + TickerTape
 │   ├── lib
-│   │   ├── api.ts
-│   │   ├── format.ts
-│   │   ├── streaming.ts
-│   │   ├── theme-context.tsx
-│   │   ├── universe.ts
-│   │   └── utils.ts
-│   ├── next.config.mjs
-│   ├── next-env.d.ts
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── postcss.config.mjs
-│   ├── public
-│   │   ├── architecture.png
-│   │   ├── finora_icon.png
-│   │   └── finora_logo.png
-│   ├── styles
-│   │   └── globals.css
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
-│   └── tsconfig.tsbuildinfo
-├── .gitignore
-├── README.md
+│   │   ├── api.ts                    ← Typed fetch client
+│   │   └── streaming.ts              ← useSSE hook, ChatMessage type
+│   └── Dockerfile
 └── tests
     ├── backend
-    │   ├── conftest.py
-    │   ├── integration
-    │   │   └── test_pipeline.py
-    │   ├── stress
-    │   │   ├── queries.py
-    │   │   └── test_suite.py
-    │   └── unit
-    │       ├── test_fusion_signals.py
-    │       ├── test_guardrails.py
-    │       └── test_intent_classifier.py
-    ├── frontend
-    │   └── __tests__
-    │       └── streaming.test.ts
-    └── README.md
+    │   ├── unit/                     ← fusion signals, guardrails, intent classifier
+    │   ├── integration/              ← full pipeline
+    │   └── stress/                   ← 33 queries × 2 modes
+    └── frontend/__tests__/
 ```
 
 ---
 
-## Testing (Optional)
+## Testing
 
 Finora ships a comprehensive test suite covering unit tests, integration tests, and stress testing. For details on running tests, see [`tests/README.md`](tests/README.md).
 
@@ -435,14 +375,14 @@ docker-compose up --build
 2. Add this to the top of the backend `README.md` in the Space repo:
 
 ```yaml
-***
+---
 title: finora-backend
 emoji: 🚀
 colorFrom: blue
 colorTo: gray
 sdk: docker
 app_port: 7860
-***
+---
 ```
 
 3. Make sure your backend container starts on `0.0.0.0:7860`.
@@ -452,18 +392,10 @@ uvicorn backend.main:app --host 0.0.0.0 --port 7860
 ```
 
 4. Set Hugging Face Space variables/secrets for:
-- `GROQ_API_KEY`
-- `GROQ_MODEL_PRIMARY`
-- `GROQ_MODEL_FAST`
-- `LANGCHAIN_API_KEY`
-- `LANGCHAIN_PROJECT`
-- `LANGCHAIN_TRACING_V2`
-- `QDRANT_URL`
-- `QDRANT_API_KEY`
-- `GUARDRAILS_ENABLED`
-- `DISCLAIMER_LOCALE`
-- `CORS_ORIGINS`
-- `ENV`
+- `GROQ_API_KEY`, `GROQ_MODEL_PRIMARY`, `GROQ_MODEL_FAST`
+- `LANGCHAIN_API_KEY`, `LANGCHAIN_PROJECT`, `LANGCHAIN_TRACING_V2`
+- `QDRANT_URL`, `QDRANT_API_KEY`
+- `GUARDRAILS_ENABLED`, `DISCLAIMER_LOCALE`, `CORS_ORIGINS`, `ENV`
 
 5. After deployment, your Space URL will be something like:
 
@@ -484,7 +416,7 @@ vercel --prod
 
 ```bash
 curl https://<your-space-name>.hf.space/api/health
-# → {"status":"ok","qdrant":"connected","groq":"connected","langsmith":"configured","langsmith_url":"https://smith.langchain.com/projects/finora-prod","universe_size":553}
+# → {"status":"ok","qdrant":"connected","groq":"connected","langsmith":"configured","universe_size":553}
 ```
 
 ---
@@ -530,7 +462,20 @@ python backend/scripts/eval_rag.py --tickers AAPL MSFT RELIANCE.NS --n 5
 }
 ```
 
-Stream events: `guardrail → intent → retrieving → token... → chart_data → citation → disclaimer → done`
+Stream events:
+
+```
+guardrail  → { "status": "allowed" | "blocked" }
+intent     → { "intents": ["real_time", "news"] }
+retrieving → { "news_chunks": 8, "historical_chunks": 3, "realtime": true }
+token      → { "content": "Apple fell..." }           (streamed line-by-line)
+chart_data → { "ticker", "currency", "label", "bars": [...] }
+finance_chart → { "ticker", "currency", "bars": [...] }
+citation   → { "sources": [{ "url", "title", "source", "time" }] }
+suggestions→ { "questions": ["What's Apple's PE ratio?", ...] }
+disclaimer → { "text": "⚠ For informational purposes only..." }
+done       → { "trace_id", "confidence", "langsmith_url", "cached" }
+```
 
 ### `GET /api/stocks/search?q=apple&limit=10`
 Fuzzy search across 555 stocks. Returns ticker, name, exchange, sector, country.
@@ -548,22 +493,25 @@ Real connectivity checks — Groq (1-token ping), Qdrant (list collections).
 
 ## Guardrails
 
-**Mode-aware blocking:**
+### Input — Mode-Aware Blocking
 
 | Intent | INSIGHT | TRADER |
 |---|---|---|
-| `direct_buy_sell_recommendation` | Blocked → redirect with disclaimer | Allowed → signals + risk context |
+| `direct_buy_sell_recommendation` | Blocked → redirect with signal context | Allowed → signals + risk framing |
 | `personal_financial_planning` | Blocked → redirect | Allowed |
 | `insider_trading_context` | Blocked | Blocked |
 | `market_manipulation` | Blocked | Blocked |
 | `tax_evasion_advice` | Blocked | Blocked |
 | `specific_options_strategy` | Blocked | Blocked |
 
-**Output guardrails (post-generation):**
-- Hallucination check — numbers in response verified against `fused_context`
-- PII scrub — Aadhaar, PAN card, account numbers redacted
-- Confidence signal — low retrieval score surfaces warning in UI
-- No emojis enforced via system prompt rule
+The input classifier (`llama-3.1-8b-instant`) is calibrated to avoid over-blocking. "Should I invest in X?" and "Is X a good long-term investment?" are classified as `fundamental_analysis` (allowed), not as `direct_buy_sell_recommendation`. Only queries that combine a personal position with a decision request are blocked.
+
+### Output — Post-Generation Pipeline
+
+1. **Hallucination check** — every number/% in the response is extracted and verified against `fused_context`. Tolerances: 3 percentage points for rates/yields; 15% relative for dollar amounts. Zero-values are always treated as valid financial facts. Unverified sentences are stripped. If stripping would remove > 70% of the response, the original is returned instead of an empty answer.
+2. **PII scrub** — Aadhaar (XXXX XXXX XXXX), PAN card (ABCDE1234F), and 10–18-digit account numbers are redacted before the response reaches the client.
+3. **Directional language detection** — if the response contains phrases like "will rise", "you should buy", or "guaranteed", the SEBI/SEC disclaimer is appended. On non-directional responses, the disclaimer fires once per session via a separate SSE event.
+4. **Units enforcement** — `UNITS MANDATORY` rule in every system prompt requires `$B`, `%`, `x` (for multiples) notation on all numerical values. Bare numbers without context are flagged.
 
 ---
 

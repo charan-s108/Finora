@@ -12,6 +12,7 @@ import { AnalystConsensus } from "@/components/dashboard/AnalystConsensus";
 import { StockAbout } from "@/components/dashboard/StockAbout";
 import { SectorHeatmap } from "@/components/dashboard/SectorHeatmap";
 import { SimilarStocks } from "@/components/dashboard/SimilarStocks";
+import { FinancialPerformancePanel } from "@/components/dashboard/FinancialPerformancePanel";
 import { StockSearch } from "@/components/dashboard/StockSearch";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -36,6 +37,8 @@ export default async function TickerPage({ params }: Props) {
   ]);
 
   if (!stock) notFound();
+
+  const currency = stock.currency ?? "USD";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -73,27 +76,37 @@ export default async function TickerPage({ params }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Left: main content */}
           <div className="lg:col-span-2 space-y-4">
-            <PriceChart ticker={ticker} currency={stock.currency} />
+            <PriceChart ticker={ticker} currency={currency} />
             <div className="lg:hidden">
-              <AnalystConsensus consensus={stock.analyst_consensus ?? null} />
+              <AnalystConsensus consensus={stock.analyst_consensus ?? null} currency={currency} />
             </div>
             <div className="lg:hidden">
               <StockAbout stock={stock} />
             </div>
             <FundamentalsGrid stock={stock} />
+            {stock.financial_performance && (
+              <div className="lg:hidden">
+                <FinancialPerformancePanel
+                  data={stock.financial_performance}
+                  ticker={ticker}
+                />
+              </div>
+            )}
             <NewsRagPanel items={stock.news_rag ?? []} />
             <HistoricalRagPanel signals={stock.historical_signals ?? []} />
-            {/* Mobile only — similar stocks below historical */}
-            <div className="lg:hidden">
-              <SimilarStocks stocks={stock.similar_stocks ?? []} currentTicker={ticker} />
-            </div>
+            <SimilarStocks stocks={stock.similar_stocks ?? []} currentTicker={ticker} />
           </div>
 
           {/* Right: desktop sidebar */}
           <div className="hidden lg:block space-y-4">
-            <AnalystConsensus consensus={stock.analyst_consensus ?? null} />
+            <AnalystConsensus consensus={stock.analyst_consensus ?? null} currency={currency} />
             <StockAbout stock={stock} />
-            <SimilarStocks stocks={stock.similar_stocks ?? []} currentTicker={ticker} />
+            {stock.financial_performance && (
+              <FinancialPerformancePanel
+                data={stock.financial_performance}
+                ticker={ticker}
+              />
+            )}
             <SectorHeatmap data={sectors} />
           </div>
         </div>
@@ -104,10 +117,10 @@ export default async function TickerPage({ params }: Props) {
       {/* Footer */}
       <footer className="border-t border-border/40 bg-background/60 backdrop-blur-sm mt-2">
         <div className="max-w-7xl mx-auto px-4 h-10 flex items-center justify-between gap-4">
-          <p className="text-[11px] text-muted-foreground/50">
-            © {new Date().getFullYear()} Finora · For informational purposes only · Not financial advice
+          <p className="text-[10px] sm:text-[11px] text-muted-foreground/50 truncate">
+            © {new Date().getFullYear()} Finora · Informational only · Not financial advice
           </p>
-          <Link href="/eval" className="text-[11px] text-muted-foreground/40 hover:text-muted-foreground transition-colors flex-shrink-0">
+          <Link href="/eval" className="text-[10px] sm:text-[11px] text-muted-foreground/40 hover:text-muted-foreground transition-colors flex-shrink-0">
             RAG Eval →
           </Link>
         </div>

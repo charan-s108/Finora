@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { motion, type MotionProps } from "framer-motion";
 import { Search, TrendingUp, Flame, Users, Zap, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { StockSearchResult } from "@/lib/api";
@@ -108,10 +109,10 @@ function StockSearchHero() {
       {/* Search trigger */}
       <button
         onClick={() => { setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); }}
-        className="group relative w-full max-w-xl flex items-center gap-3 px-5 py-4 rounded-2xl bg-card border border-border hover:border-primary/50 shadow-lg hover:shadow-primary/10 transition-all text-left"
+        className="group relative w-full max-w-xl flex items-center gap-2.5 px-3.5 sm:px-5 py-3 sm:py-4 rounded-2xl bg-card border border-border hover:border-primary/50 shadow-lg hover:shadow-primary/10 transition-all text-left"
       >
-        <Search className="w-5 h-5 text-muted-foreground flex-shrink-0 group-hover:text-primary transition-colors" />
-        <span className="text-muted-foreground flex-1">
+        <Search className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground flex-shrink-0 group-hover:text-primary transition-colors" />
+        <span className="text-muted-foreground flex-1 text-[clamp(0.7rem,2.2vw,1rem)] leading-snug">
           Search 555+ stocks — AAPL, RELIANCE, INFY...
         </span>
       </button>
@@ -216,52 +217,86 @@ function StockSearchHero() {
   );
 }
 
+const heroFade = (delay: number): MotionProps => ({
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.65, delay, ease: [0.22, 1, 0.36, 1] },
+});
+
 export function Hero() {
   return (
     <section className="relative flex flex-col items-center justify-center min-h-[calc(100svh-110px)] px-4 py-16 text-center overflow-hidden">
       {/* Background gradient */}
       <div className="absolute inset-0 gradient-hero-light dark:gradient-hero-dark pointer-events-none" />
 
-      {/* Decorative blobs */}
-      <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-primary/8 dark:bg-primary/10 rounded-full blur-3xl pointer-events-none" />
+      {/* Animated blobs */}
+      <motion.div
+        className="absolute top-1/4 left-1/6 w-72 h-72 bg-primary/6 dark:bg-primary/10 rounded-full blur-3xl pointer-events-none"
+        animate={{ x: [0, 20, 0], y: [0, -15, 0] }}
+        transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        className="absolute bottom-1/4 right-1/6 w-96 h-96 bg-violet-500/5 dark:bg-violet-500/8 rounded-full blur-3xl pointer-events-none"
+        animate={{ x: [0, -25, 0], y: [0, 20, 0] }}
+        transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+      />
+      <motion.div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-primary/3 dark:bg-primary/5 rounded-full blur-3xl pointer-events-none"
+        animate={{ scale: [1, 1.05, 1] }}
+        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+      />
 
       <div className="relative z-10 flex flex-col items-center max-w-4xl mx-auto">
-        <GitHubBadge />
+        <motion.div {...heroFade(0)}>
+          <GitHubBadge />
+        </motion.div>
 
-        <h1 className="font-heading font-bold text-4xl sm:text-5xl md:text-6xl lg:text-7xl leading-tight tracking-tight text-foreground mb-5">
+        <motion.h1
+          {...heroFade(0.1)}
+          className="font-heading font-black text-4xl sm:text-5xl md:text-6xl lg:text-7xl leading-[1.05] tracking-tight text-foreground mb-5"
+        >
           AI Financial Intelligence{" "}
           <span className="text-gradient">for Global Investors</span>
-        </h1>
+        </motion.h1>
 
-        <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl leading-relaxed mb-10">
+        <motion.p
+          {...heroFade(0.2)}
+          className="text-lg sm:text-xl text-muted-foreground max-w-2xl leading-relaxed mb-10"
+        >
           Real-time analysis for 555+ US &amp; Indian stocks — powered by multi-layer RAG, 20-year
           historical patterns, and Groq AI. Built for NRI investors.
-        </p>
+        </motion.p>
 
         {/* Badges */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mb-10">
+        <motion.div
+          {...heroFade(0.3)}
+          className="flex flex-wrap items-center justify-center gap-3 mb-10"
+        >
           {[
             { icon: <Zap className="w-3.5 h-3.5" />, label: "Real-time Data" },
             { icon: <Globe className="w-3.5 h-3.5" />, label: "US · India · Global" },
             { icon: <TrendingUp className="w-3.5 h-3.5" />, label: "20-Year Patterns" },
           ].map(({ icon, label }) => (
-            <span
+            <motion.span
               key={label}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/8 dark:bg-primary/15 text-primary text-xs font-semibold border border-primary/20"
+              whileHover={{ scale: 1.05, y: -1 }}
+              transition={{ type: "spring", stiffness: 400, damping: 20 }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/8 dark:bg-primary/15 text-primary text-xs font-semibold border border-primary/20 cursor-default"
             >
               {icon}
               {label}
-            </span>
+            </motion.span>
           ))}
-        </div>
+        </motion.div>
 
         {/* Search */}
-        <div className="w-full flex flex-col items-center">
+        <motion.div {...heroFade(0.4)} className="w-full flex flex-col items-center">
           <StockSearchHero />
-        </div>
+        </motion.div>
 
-        <SocialProof />
+        <motion.div {...heroFade(0.5)}>
+          <SocialProof />
+        </motion.div>
       </div>
     </section>
   );

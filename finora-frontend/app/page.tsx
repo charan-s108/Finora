@@ -15,21 +15,22 @@ export default function LandingPage() {
         <Hero />
 
         {/* Market Pulse */}
-        <section className="border-t border-border py-14 px-4 bg-muted/20 dark:bg-card/20">
+        <section className="border-t border-border py-16 px-4">
           <div className="max-w-7xl mx-auto">
-            <div className="mb-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+            <div className="mb-10 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold text-primary uppercase tracking-widest mb-2">
+                <p className="text-xs font-bold text-primary uppercase tracking-[0.2em] mb-2">
                   Live · Our Pipeline
                 </p>
-                <h2 className="font-heading font-bold text-3xl sm:text-4xl text-foreground mb-2">
+                <h2 className="font-heading font-black text-3xl sm:text-4xl text-foreground mb-2 tracking-tight">
                   Global Market Pulse
                 </h2>
-                <p className="text-muted-foreground text-sm">
-                  30-day trends fetched from our backend · click any row to chart it · open arrow to deep-dive
+                <p className="text-muted-foreground text-sm max-w-md">
+                  30-day trends — click any row to chart it · open arrow to deep-dive the full dashboard
                 </p>
               </div>
-              <span className="text-xs text-muted-foreground bg-card border border-border px-3 py-1.5 rounded-full self-start sm:self-auto shadow-sm">
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-card border border-border px-3 py-1.5 rounded-full self-start sm:self-auto shadow-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 US · India · Global · 555 stocks
               </span>
             </div>
@@ -37,7 +38,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* Features */}
+        {/* Stats + Features */}
         <Features />
       </main>
 

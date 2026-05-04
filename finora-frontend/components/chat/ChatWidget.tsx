@@ -7,7 +7,7 @@ import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { SuggestionChips } from "./SuggestionChips";
 import { TypingIndicator } from "./TypingIndicator";
-import { streamChat, type ChatMessage as ChatMessageType, type PriceBar, type UserMode } from "@/lib/streaming";
+import { streamChat, type ChatMessage as ChatMessageType, type PriceBar, type FinanceBar, type UserMode } from "@/lib/streaming";
 
 interface Props {
   ticker: string;
@@ -70,6 +70,8 @@ export function ChatWidget({ ticker }: Props) {
       let confidence = 0;
       let intents: string[] = [];
       let chartData: ChatMessageType["chartData"] | undefined;
+      let financeChartData: ChatMessageType["financeChartData"] | undefined;
+      let followupSuggestions: string[] | undefined;
       let traceUrl: string | undefined;
 
       for await (const event of streamChat(
@@ -88,6 +90,14 @@ export function ChatWidget({ ticker }: Props) {
             label: (event.label as string) || "1M",
             bars: (event.bars as PriceBar[]) || [],
           };
+        } else if (event.type === "finance_chart") {
+          financeChartData = {
+            ticker: (event.ticker as string) || ticker,
+            currency: (event.currency as string) || "USD",
+            bars: (event.bars as FinanceBar[]) || [],
+          };
+        } else if (event.type === "suggestions") {
+          followupSuggestions = (event.questions as string[]) || [];
         } else if (event.type === "intent") {
           intents = (event.intents as string[]) || [];
         } else if (event.type === "citation") {
@@ -102,7 +112,7 @@ export function ChatWidget({ ticker }: Props) {
 
       setMessages(prev => prev.map(m =>
         m.id === assistantMsg.id
-          ? { ...m, content, citations, disclaimer, confidence, intents, chartData, traceUrl, isStreaming: false }
+          ? { ...m, content, citations, disclaimer, confidence, intents, chartData, financeChartData, followupSuggestions, traceUrl, isStreaming: false }
           : m
       ));
     } catch (err: unknown) {
@@ -185,8 +195,24 @@ export function ChatWidget({ ticker }: Props) {
                 </p>
               </div>
             )}
-            {messages.map(msg => (
-              <ChatMessage key={msg.id} message={msg} />
+            {messages.map((msg, idx) => (
+              <div key={msg.id}>
+                <ChatMessage message={msg} />
+                {!msg.isStreaming && msg.role === "assistant" && msg.followupSuggestions && msg.followupSuggestions.length > 0 && idx === messages.length - 1 && (
+                  <div className="mt-2 flex flex-col gap-1.5 pl-1">
+                    {msg.followupSuggestions.map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => sendMessage(q)}
+                        disabled={streaming}
+                        className="text-left text-xs text-muted-foreground hover:text-primary border border-border/50 hover:border-primary/30 rounded-lg px-2.5 py-1.5 transition-colors bg-secondary/30 hover:bg-primary/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
             {streaming && (
               <TypingIndicator />

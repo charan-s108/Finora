@@ -12,6 +12,7 @@ COLLECTIONS = {
     "finora_news": "QDRANT_COLLECTION_NEWS",
     "finora_historical": "QDRANT_COLLECTION_HISTORICAL",
     "finora_filings": "QDRANT_COLLECTION_FILINGS",
+    "finora_financials": "QDRANT_COLLECTION_FINANCIALS",
 }
 
 
@@ -48,10 +49,11 @@ def ensure_collections(client: QdrantClient | None = None) -> None:
 
 
 def collection_name(key: str) -> str:
-    """key: 'news' | 'historical' | 'filings'"""
+    """key: 'news' | 'historical' | 'filings' | 'financials'"""
     env_map = {
         "news": "QDRANT_COLLECTION_NEWS",
         "historical": "QDRANT_COLLECTION_HISTORICAL",
         "filings": "QDRANT_COLLECTION_FILINGS",
+        "financials": "QDRANT_COLLECTION_FINANCIALS",
     }
     return os.getenv(env_map[key], f"finora_{key}")

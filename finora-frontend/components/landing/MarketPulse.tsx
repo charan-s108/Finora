@@ -43,28 +43,46 @@ interface Row {
 }
 
 // Module-level cache so rows survive navigation
-const _rowCache: Map<string, Row> = new Map();
+let _allRowsCache: Row[] | null = null;
+let _allRowsInflight: Promise<Row[]> | null = null;
 
-async function fetchRow(s: typeof TABLE_TICKERS[0]): Promise<Row | null> {
-  if (_rowCache.has(s.ticker)) return _rowCache.get(s.ticker)!;
-  try {
-    const res = await fetch(`/api/stocks/${encodeURIComponent(s.ticker)}`);
-    if (!res.ok) return null;
-    const d = await res.json();
-    if (d.price == null) return null;
-    const row: Row = {
-      ticker: s.ticker,
-      label: s.label,
-      exchange: s.exchange,
-      currency: s.currency,
-      price: d.price,
-      pct_change: d.pct_change ?? 0,
-    };
-    _rowCache.set(s.ticker, row);
-    return row;
-  } catch {
-    return null;
-  }
+async function fetchAllRows(): Promise<Row[]> {
+  if (_allRowsCache) return _allRowsCache;
+  if (_allRowsInflight) return _allRowsInflight;
+
+  const tickerStr = TABLE_TICKERS.map((t) => t.ticker).join(",");
+  _allRowsInflight = fetch(`/api/stocks/batch-quotes?tickers=${tickerStr}`)
+    .then(async (res) => {
+      if (!res.ok) return [];
+      const quotes = (await res.json()) as Array<{
+        ticker: string;
+        price: number | null;
+        pct_change: number | null;
+        currency: string;
+      }>;
+      const quoteMap = new Map(quotes.map((q) => [q.ticker, q]));
+      const rows: Row[] = TABLE_TICKERS.flatMap((s) => {
+        const q = quoteMap.get(s.ticker);
+        if (!q || q.price == null) return [];
+        return [{
+          ticker: s.ticker,
+          label: s.label,
+          exchange: s.exchange,
+          currency: s.currency,
+          price: q.price,
+          pct_change: q.pct_change ?? 0,
+        }];
+      });
+      _allRowsCache = rows;
+      _allRowsInflight = null;
+      return rows;
+    })
+    .catch(() => {
+      _allRowsInflight = null;
+      return [];
+    });
+
+  return _allRowsInflight;
 }
 
 function BigChart({
@@ -149,11 +167,13 @@ export function MarketPulse() {
   const [chartLoading, setChartLoading] = useState(true);
 
   // Table state
-  const [rows, setRows] = useState<Row[]>([]);
+  const [allRows, setAllRows] = useState<Row[]>(_allRowsCache ?? []);
   const [page, setPage] = useState(1);
-  const [tableLoading, setTableLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [tableLoading, setTableLoading] = useState(!_allRowsCache);
   const initRef = useRef(false);
+
+  const visibleRows = allRows.slice(0, page * PAGE_SIZE);
+  const hasMore = page * PAGE_SIZE < allRows.length;
 
   // Load big chart
   const loadChart = useCallback(async (ticker: string) => {
@@ -167,29 +187,19 @@ export function MarketPulse() {
 
   useEffect(() => { loadChart(featured); }, [featured, loadChart]);
 
-  // Load first page once — ref guard prevents StrictMode double-fire
+  // Single batch-quotes fetch on mount
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
-    loadPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (_allRowsCache) return;
+    setTableLoading(true);
+    fetchAllRows().then((rows) => {
+      setAllRows(rows);
+      setTableLoading(false);
+    });
   }, []);
 
-  async function loadPage(p: number) {
-    setTableLoading(true);
-    const slice = TABLE_TICKERS.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE);
-    const results = await Promise.allSettled(slice.map(fetchRow));
-    const valid = results
-      .filter((r): r is PromiseFulfilledResult<Row | null> => r.status === "fulfilled")
-      .map((r) => r.value)
-      .filter((v): v is Row => v !== null);
-    setRows((prev) => [...prev, ...valid]);
-    setHasMore(p * PAGE_SIZE < TABLE_TICKERS.length);
-    setPage(p);
-    setTableLoading(false);
-  }
-
-  const featuredRow = rows.find((r) => r.ticker === featured);
+  const featuredRow = allRows.find((r) => r.ticker === featured);
   const chartUp = featuredRow ? featuredRow.pct_change >= 0 : true;
 
   return (
@@ -236,7 +246,7 @@ export function MarketPulse() {
         </div>
 
         <div className="flex-1 divide-y divide-border">
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const up = row.pct_change >= 0;
             const color = up ? "text-emerald-500" : "text-rose-500";
             const isFeatured = row.ticker === featured;
@@ -287,7 +297,7 @@ export function MarketPulse() {
         {hasMore && !tableLoading && (
           <div className="p-3 border-t border-border">
             <button
-              onClick={() => loadPage(page + 1)}
+              onClick={() => setPage((p) => p + 1)}
               className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium text-primary hover:bg-primary/8 transition-colors border border-primary/20 hover:border-primary/40"
             >
               <ChevronDown className="w-4 h-4" />
@@ -296,9 +306,9 @@ export function MarketPulse() {
           </div>
         )}
 
-        {!hasMore && rows.length > 0 && (
+        {!hasMore && allRows.length > 0 && (
           <div className="p-3 border-t border-border text-center text-xs text-muted-foreground">
-            All {rows.length} stocks loaded
+            All {allRows.length} stocks loaded
           </div>
         )}
       </div>

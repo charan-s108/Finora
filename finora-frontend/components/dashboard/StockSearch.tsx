@@ -134,10 +134,10 @@ export function StockSearch({ compact = false }: Props) {
       <>
         <button
           onClick={() => { setOpen(true); setTimeout(() => inputRef.current?.focus(), 50); }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary hover:bg-accent transition-colors text-sm text-muted-foreground border border-border"
+          className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md bg-secondary hover:bg-accent transition-colors text-xs sm:text-sm text-muted-foreground border border-border"
         >
-          <Search className="w-3.5 h-3.5" />
-          <span>Search stocks</span>
+          <Search className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="hidden xs:inline sm:inline">Search stocks</span>
         </button>
         {modal}
       </>

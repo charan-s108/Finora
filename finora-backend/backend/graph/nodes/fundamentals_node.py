@@ -7,7 +7,7 @@ import time
 import structlog
 
 from backend.graph.state import FiNoraState
-from backend.rag.yahoo_client import fetch_fundamentals, fetch_sector_etfs
+from backend.rag.yahoo_client import fetch_balance_sheet, fetch_cashflow, fetch_fundamentals, fetch_income_stmt, fetch_sector_etfs
 
 log = structlog.get_logger()
 
@@ -100,10 +100,21 @@ async def fundamentals_node(state: FiNoraState) -> dict:
             result["fundamental_data"] = cached
         else:
             loop = asyncio.get_running_loop()
-            data = await loop.run_in_executor(None, fetch_fundamentals, yf_ticker)
+            data, annual_income, annual_cashflow, annual_balance = await asyncio.gather(
+                loop.run_in_executor(None, fetch_fundamentals, yf_ticker),
+                loop.run_in_executor(None, fetch_income_stmt, yf_ticker),
+                loop.run_in_executor(None, fetch_cashflow, yf_ticker),
+                loop.run_in_executor(None, fetch_balance_sheet, yf_ticker),
+            )
             data["ticker"] = ticker
+            data["annual_income"] = annual_income
+            data["annual_cashflow"] = annual_cashflow
+            data["annual_balance"] = annual_balance
             _set_cached_fundamentals(yf_ticker, data)
-            log.info("fundamentals_node_done", ticker=ticker, yf_ticker=yf_ticker, pe=data.get("pe"))
+            log.info("fundamentals_node_done", ticker=ticker, yf_ticker=yf_ticker,
+                     pe=data.get("pe"), income_periods=len(annual_income),
+                     cashflow_periods=len(annual_cashflow),
+                     balance_periods=len(annual_balance))
             result["fundamental_data"] = data
 
     # Fetch sector context if comparative intent present

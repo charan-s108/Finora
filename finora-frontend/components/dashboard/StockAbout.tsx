@@ -1,5 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import type { ReactNode } from "react";
-import { Building2, Globe, Users, MapPin, TrendingUp, Percent, ExternalLink } from "lucide-react";
+import { Building2, Globe, Users, MapPin, TrendingUp, Percent, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 import type { StockDetail } from "@/lib/api";
 
 interface Props {
@@ -24,10 +27,11 @@ function StatRow({ icon, label, value }: { icon: ReactNode; label: string; value
 }
 
 export function StockAbout({ stock }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const employees = formatEmployees(stock.full_time_employees);
   const location = [stock.city, stock.country].filter(Boolean).join(", ");
-
   const hasStats = stock.beta != null || stock.dividend_yield != null || employees || location || stock.industry;
+  const summaryLong = (stock.business_summary?.length ?? 0) > 300;
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -41,9 +45,23 @@ export function StockAbout({ stock }: Props) {
       <div className="p-4 space-y-4">
         {/* Business summary */}
         {stock.business_summary ? (
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-5">
-            {stock.business_summary}
-          </p>
+          <div>
+            <p className={`text-xs text-muted-foreground leading-relaxed ${expanded ? "" : "line-clamp-4"}`}>
+              {stock.business_summary}
+            </p>
+            {summaryLong && (
+              <button
+                onClick={() => setExpanded((v) => !v)}
+                className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+              >
+                {expanded ? (
+                  <><ChevronUp className="w-3 h-3" /> Show less</>
+                ) : (
+                  <><ChevronDown className="w-3 h-3" /> Show more</>
+                )}
+              </button>
+            )}
+          </div>
         ) : (
           <p className="text-xs text-muted-foreground italic">
             No business description available.

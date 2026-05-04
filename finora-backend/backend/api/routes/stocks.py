@@ -8,7 +8,11 @@ from pydantic import BaseModel
 
 from backend.api.middleware.rate_limit import limiter
 from backend.rag.ingestion.universe import universe
-from backend.rag.yahoo_client import fetch_company_info, fetch_fundamentals, fetch_news, fetch_ohlcv, fetch_quote, fetch_sector_etfs, fetch_filings
+from backend.rag.yahoo_client import (
+    fetch_balance_sheet, fetch_cashflow, fetch_company_info,
+    fetch_filings, fetch_fundamentals, fetch_income_stmt,
+    fetch_news, fetch_ohlcv, fetch_quote, fetch_sector_etfs,
+)
 
 log = structlog.get_logger()
 router = APIRouter(tags=["stocks"])
@@ -61,6 +65,7 @@ class SimilarStock(BaseModel):
     sector: str
     exchange: str
     currency: str
+    website: str | None = None
 
 
 class SectorData(BaseModel):
@@ -76,6 +81,37 @@ class FilingItem(BaseModel):
     accession_number: str
     document: str
     url: str
+
+
+class FinancialPeriod(BaseModel):
+    period: str
+    period_type: str
+    revenue: float | None = None
+    net_income: float | None = None
+    revenue_growth_pct: float | None = None
+    profit_growth_pct: float | None = None
+
+
+class FinancialPerformance(BaseModel):
+    currency: str
+    currency_unit: str
+    annual: list[FinancialPeriod]
+    quarterly: list[FinancialPeriod]
+    revenue_1y_growth: float | None = None
+    profit_1y_growth: float | None = None
+    revenue_3y_cagr: float | None = None
+    profit_3y_cagr: float | None = None
+
+
+class FinancialsDetail(BaseModel):
+    ticker: str
+    currency: str
+    currency_unit: str
+    income_annual: list[dict]
+    income_quarterly: list[dict]
+    balance_sheet: list[dict]
+    cashflow: list[dict]
+
 
 class StockDetail(BaseModel):
     ticker: str
@@ -108,6 +144,7 @@ class StockDetail(BaseModel):
     historical_signals: list[HistoricalSignal]
     similar_stocks: list[SimilarStock] = []
     filings: list[FilingItem] = []
+    financial_performance: FinancialPerformance | None = None
 
 
 _SECTORS_CACHE: tuple[list[dict], float] | None = None
@@ -125,12 +162,41 @@ def _get_similar_stocks(current_ticker: str, sector: str | None, limit: int = 5)
             sector=s.get("sector", ""),
             exchange=s.get("exchange", ""),
             currency=s.get("currency", "USD"),
+            website=s.get("website"),
         )
         for s in all_stocks
         if s.get("sector", "").lower() == sector.lower()
         and s["ticker"] != current_ticker
     ]
     return similar[:limit]
+
+
+def _fmt_period_label(date_str: str, period_type: str) -> str:
+    """'2024-09-30' + annual → 'FY2024'; quarterly → 'Sep '24'"""
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        if period_type == "annual":
+            return f"FY{dt.year}"
+        return dt.strftime("%b '%y")
+    except Exception:
+        return date_str
+
+
+def _growth_pct(curr: float | None, prev: float | None) -> float | None:
+    if curr and prev and prev != 0:
+        return round((curr - prev) / abs(prev) * 100, 1)
+    return None
+
+
+def _compute_cagr(stmts: list[dict], field: str, years: int) -> float | None:
+    if len(stmts) <= years:
+        return None
+    end_val = stmts[0].get(field)
+    start_val = stmts[years].get(field)
+    if not end_val or not start_val or start_val <= 0:
+        return None
+    return round(((end_val / start_val) ** (1 / years) - 1) * 100, 1)
 
 
 def _safe_float(val: Any) -> float | None:
@@ -236,6 +302,58 @@ async def _fetch_detail(yf_ticker: str, display_ticker: str) -> dict[str, Any]:
             log.warning("filings_fetch_failed", ticker=yf_ticker, error=str(exc))
             filings = []
 
+        # Financial performance
+        financial_performance: FinancialPerformance | None = None
+        try:
+            currency = "INR" if yf_ticker.endswith((".NS", ".BO")) else "USD"
+            unit_divisor = 1e7 if currency == "INR" else 1e9
+            currency_unit = "Cr" if currency == "INR" else "B"
+
+            def _to_display(raw: Any) -> float | None:
+                v = _safe_float(raw)
+                return round(v / unit_divisor, 1) if v is not None else None
+
+            annual_stmts = fetch_income_stmt(yf_ticker, quarterly=False)
+            quarterly_stmts = fetch_income_stmt(yf_ticker, quarterly=True)
+
+            annual_periods: list[FinancialPeriod] = []
+            for i, s in enumerate(annual_stmts[:5]):
+                prev = annual_stmts[i + 1] if i + 1 < len(annual_stmts) else None
+                annual_periods.append(FinancialPeriod(
+                    period=_fmt_period_label(s["period"], "annual"),
+                    period_type="annual",
+                    revenue=_to_display(s.get("revenue")),
+                    net_income=_to_display(s.get("net_income")),
+                    revenue_growth_pct=_growth_pct(s.get("revenue"), prev.get("revenue") if prev else None),
+                    profit_growth_pct=_growth_pct(s.get("net_income"), prev.get("net_income") if prev else None),
+                ))
+
+            quarterly_periods: list[FinancialPeriod] = []
+            for i, s in enumerate(quarterly_stmts[:5]):
+                prev = quarterly_stmts[i + 1] if i + 1 < len(quarterly_stmts) else None
+                quarterly_periods.append(FinancialPeriod(
+                    period=_fmt_period_label(s["period"], "quarterly"),
+                    period_type="quarterly",
+                    revenue=_to_display(s.get("revenue")),
+                    net_income=_to_display(s.get("net_income")),
+                    revenue_growth_pct=_growth_pct(s.get("revenue"), prev.get("revenue") if prev else None),
+                    profit_growth_pct=_growth_pct(s.get("net_income"), prev.get("net_income") if prev else None),
+                ))
+
+            if annual_periods or quarterly_periods:
+                financial_performance = FinancialPerformance(
+                    currency=currency,
+                    currency_unit=currency_unit,
+                    annual=annual_periods,
+                    quarterly=quarterly_periods,
+                    revenue_1y_growth=annual_periods[0].revenue_growth_pct if annual_periods else None,
+                    profit_1y_growth=annual_periods[0].profit_growth_pct if annual_periods else None,
+                    revenue_3y_cagr=_compute_cagr(annual_stmts, "revenue", 3),
+                    profit_3y_cagr=_compute_cagr(annual_stmts, "net_income", 3),
+                )
+        except Exception as exc:
+            log.warning("financial_performance_failed", ticker=yf_ticker, error=str(exc))
+
         ac = fund.get("analyst_consensus", {}) or {}
         consensus = AnalystConsensus(
             buy=int(ac.get("buy") or 0),
@@ -269,10 +387,52 @@ async def _fetch_detail(yf_ticker: str, display_ticker: str) -> dict[str, Any]:
             "news_rag": news_rag,
             "historical_signals": historical_signals,
             "filings": filings,
+            "financial_performance": financial_performance,
         }
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _blocking)
+
+
+class BatchQuote(BaseModel):
+    ticker: str
+    price: float | None
+    change: float | None
+    pct_change: float | None
+    currency: str
+
+
+@router.get("/batch-quotes", response_model=list[BatchQuote])
+@limiter.limit("60/minute")
+async def batch_quotes(
+    request: Request,
+    tickers: str = Query(..., max_length=500),
+) -> list[BatchQuote]:
+    """Lightweight price-only quotes for multiple tickers. Used by TickerTape."""
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()][:20]
+
+    def _fetch_one(ticker: str) -> BatchQuote | None:
+        entry = universe.get_by_ticker(ticker)
+        if not entry:
+            return None
+        yf = entry.get("yf_ticker", ticker)
+        try:
+            q = fetch_quote(yf)
+            return BatchQuote(
+                ticker=entry["ticker"],
+                price=_safe_float(q.get("price")),
+                change=_safe_float(q.get("change")),
+                pct_change=_safe_float(q.get("pct_change")),
+                currency=entry.get("currency", "USD"),
+            )
+        except Exception:
+            return None
+
+    loop = asyncio.get_running_loop()
+    results = await asyncio.gather(*[
+        loop.run_in_executor(None, _fetch_one, t) for t in ticker_list
+    ])
+    return [r for r in results if r is not None]
 
 
 @router.get("/sectors", response_model=list[SectorData])
@@ -346,6 +506,40 @@ async def get_stock(request: Request, ticker: str) -> StockDetail:
         sector=sector,
         similar_stocks=similar,
         **data,
+    )
+
+
+@router.get("/{ticker}/financials", response_model=FinancialsDetail)
+@limiter.limit("20/minute")
+async def get_financials(request: Request, ticker: str) -> FinancialsDetail:
+    """Full Income Statement, Balance Sheet, and Cash Flow for the detail page."""
+    entry = universe.get_by_ticker(ticker)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Ticker '{ticker}' not in universe")
+
+    yf_ticker = entry.get("yf_ticker", ticker)
+    currency = "INR" if yf_ticker.endswith((".NS", ".BO")) else "USD"
+    currency_unit = "Cr" if currency == "INR" else "B"
+
+    def _blocking() -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+        return (
+            fetch_income_stmt(yf_ticker, quarterly=False),
+            fetch_income_stmt(yf_ticker, quarterly=True),
+            fetch_balance_sheet(yf_ticker),
+            fetch_cashflow(yf_ticker),
+        )
+
+    loop = asyncio.get_running_loop()
+    annual, quarterly, balance, cf = await loop.run_in_executor(None, _blocking)
+
+    return FinancialsDetail(
+        ticker=entry["ticker"],
+        currency=currency,
+        currency_unit=currency_unit,
+        income_annual=annual,
+        income_quarterly=quarterly,
+        balance_sheet=balance,
+        cashflow=cf,
     )
 
 

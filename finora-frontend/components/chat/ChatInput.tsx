@@ -1,7 +1,7 @@
 "use client";
 
 import { Send } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import type { UserMode } from "@/lib/streaming";
 
 interface Props {
@@ -13,8 +13,30 @@ interface Props {
   onModeChange: (mode: UserMode) => void;
 }
 
+const LINE_HEIGHT = 22; // px per line at text-sm with leading-relaxed
+const MAX_LINES = 5;
+const MAX_HEIGHT = LINE_HEIGHT * MAX_LINES; // 110px
+
 export function ChatInput({ value, onChange, onSubmit, disabled, userMode, onModeChange }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resize = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`;
+    el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
+  };
+
+  useEffect(() => {
+    if (!value) {
+      const el = textareaRef.current;
+      if (el) {
+        el.style.height = "auto";
+        el.style.overflowY = "hidden";
+      }
+    }
+  }, [value]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -57,14 +79,15 @@ export function ChatInput({ value, onChange, onSubmit, disabled, userMode, onMod
       <div className="px-3 py-2.5 flex items-end gap-2">
         <textarea
           ref={textareaRef}
-          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none max-h-24 leading-relaxed"
+          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none leading-relaxed"
+          style={{ overflowY: "hidden" }}
           placeholder={
             userMode === "trader"
               ? "Ask about signals, momentum, key levels..."
               : "Ask about earnings, fundamentals, sector trends..."
           }
           value={value}
-          onChange={e => onChange(e.target.value)}
+          onChange={e => { onChange(e.target.value); resize(); }}
           onKeyDown={handleKeyDown}
           rows={1}
           disabled={disabled}

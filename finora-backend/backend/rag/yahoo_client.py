@@ -38,6 +38,22 @@ _crumb_ts: float = 0.0
 _CRUMB_TTL = 3600  # seconds
 
 
+def _safe_raw(obj: dict, key: str):
+    """Extract .raw from Yahoo Finance nested value objects."""
+    val = obj.get(key, {})
+    if isinstance(val, dict):
+        return val.get("raw")
+    return None
+
+
+def _stmt_val(obj: dict, key: str) -> float | None:
+    """Like _safe_raw but treats 0 as unavailable (Yahoo returns 0 for missing financial fields)."""
+    raw = _safe_raw(obj, key)
+    if raw is None or raw == 0:
+        return None
+    return raw
+
+
 def _get_valid_crumb(ticker: str) -> str:
     global _crumb, _crumb_ts
 
@@ -164,7 +180,14 @@ def fetch_quote(ticker: str) -> dict:
 
         meta = chart_result[0].get("meta", {})
         price = meta.get("regularMarketPrice")
-        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+        # regularMarketPreviousClose is always yesterday's official close regardless
+        # of chart range. chartPreviousClose reflects the chart's start date and can
+        # be 30d ago when Yahoo returns 1mo metadata for a 1d range request.
+        prev_close = (
+            meta.get("regularMarketPreviousClose")
+            or meta.get("chartPreviousClose")
+            or meta.get("previousClose")
+        )
         if price is not None and prev_close is not None:
             change = round(price - prev_close, 4)
             pct_change = round(change / prev_close * 100, 2)
@@ -407,6 +430,173 @@ def fetch_company_info(ticker: str) -> dict:
     except Exception as exc:
         log.warning("company_info_fetch_failed", ticker=ticker, error=str(exc))
         return {}
+
+
+# ── Financial Statements ──────────────────────────────────────────────────
+
+def _quotesummary(ticker: str, module: str) -> dict:
+    """Shared quoteSummary call with crumb auth. Returns result[0] or {}."""
+    if not _AVAILABLE:
+        return {}
+    try:
+        crumb = _get_valid_crumb(ticker)
+        r = _session.get(
+            f"{_BASE1}/v10/finance/quoteSummary/{ticker}",
+            params={"modules": module, "crumb": crumb},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return {}
+        result = r.json().get("quoteSummary", {}).get("result") or []
+        return result[0] if result else {}
+    except Exception as exc:
+        log.warning("quotesummary_failed", ticker=ticker, module=module, error=str(exc))
+        return {}
+
+
+def _fetch_timeseries(ticker: str, types: list[str]) -> dict[str, dict[str, float | None]]:
+    """
+    Fetch financial metrics via Yahoo Finance fundamentals-timeseries API.
+    This is the API Yahoo Finance website uses for financial statements — unlike
+    quoteSummary, it returns complete income/balance/cashflow data for all stocks.
+
+    Returns {period_date: {ts_field_name: raw_value}} dict, newest date first.
+    """
+    if not _AVAILABLE:
+        return {}
+    try:
+        import time as _time
+        crumb = _get_valid_crumb(ticker)
+        now = int(_time.time())
+        region = "IN" if ticker.endswith((".NS", ".BO")) else "US"
+        r = _session.get(
+            f"https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/{ticker}",
+            params={
+                "type": ",".join(types),
+                "period1": str(now - 6 * 365 * 24 * 3600),
+                "period2": str(now),
+                "crumb": crumb,
+                "lang": "en-US",
+                "region": region,
+                "corsDomain": "finance.yahoo.com",
+            },
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return {}
+        result = r.json().get("timeseries", {}).get("result") or []
+        by_period: dict[str, dict[str, float | None]] = {}
+        for item in result:
+            field = (item.get("meta") or {}).get("type", [""])[0]
+            if not field:
+                continue
+            for entry in item.get(field, []):
+                date = entry.get("asOfDate")
+                if not date:
+                    continue
+                raw = (entry.get("reportedValue") or {}).get("raw")
+                by_period.setdefault(date, {})[field] = raw if raw else None
+        # Newest period first
+        return dict(sorted(by_period.items(), reverse=True))
+    except Exception as exc:
+        log.warning("timeseries_fetch_failed", ticker=ticker, error=str(exc))
+        return {}
+
+
+def fetch_income_stmt(ticker: str, quarterly: bool = False) -> list[dict]:
+    """
+    Annual or quarterly income statements via Yahoo Finance timeseries API.
+    Returns list of periods, newest first. Works for US and Indian (.NS/.BO) tickers.
+    """
+    prefix = "quarterly" if quarterly else "annual"
+    types = [
+        f"{prefix}TotalRevenue",
+        f"{prefix}GrossProfit",
+        f"{prefix}EBIT",
+        f"{prefix}NetIncome",
+        f"{prefix}NormalizedEBITDA",
+        f"{prefix}TotalExpenses",   # works for both US and Indian stocks
+    ]
+    by_period = _fetch_timeseries(ticker, types)
+    out = []
+    for date, vals in by_period.items():
+        out.append({
+            "period": date,
+            "period_type": "quarterly" if quarterly else "annual",
+            "revenue": vals.get(f"{prefix}TotalRevenue"),
+            "gross_profit": vals.get(f"{prefix}GrossProfit"),
+            "operating_income": vals.get(f"{prefix}EBIT"),
+            "net_income": vals.get(f"{prefix}NetIncome"),
+            "total_expenses": vals.get(f"{prefix}TotalExpenses"),
+            "ebitda": vals.get(f"{prefix}NormalizedEBITDA"),
+        })
+    return out
+
+
+def fetch_balance_sheet(ticker: str) -> list[dict]:
+    """Annual balance sheets via Yahoo Finance timeseries API. Newest first."""
+    types = [
+        "annualTotalAssets",
+        "annualTotalLiabilitiesNetMinorityInterest",
+        "annualStockholdersEquity",
+        "annualCurrentAssets",
+        "annualCurrentLiabilities",
+        "annualLongTermDebt",
+        "annualCashCashEquivalentsAndShortTermInvestments",  # US + non-bank Indian
+        "annualCashAndCashEquivalents",                      # Indian banks fallback
+    ]
+    by_period = _fetch_timeseries(ticker, types)
+    out = []
+    for date, vals in by_period.items():
+        # Indian banks use annualCashAndCashEquivalents; US/non-bank use the longer field
+        cash = (
+            vals.get("annualCashCashEquivalentsAndShortTermInvestments")
+            or vals.get("annualCashAndCashEquivalents")
+        )
+        stmt = {
+            "period": date,
+            "period_type": "annual",
+            "total_assets": vals.get("annualTotalAssets"),
+            "total_liabilities": vals.get("annualTotalLiabilitiesNetMinorityInterest"),
+            "total_equity": vals.get("annualStockholdersEquity"),
+            "current_assets": vals.get("annualCurrentAssets"),
+            "current_liabilities": vals.get("annualCurrentLiabilities"),
+            "long_term_debt": vals.get("annualLongTermDebt"),
+            "cash": cash,
+        }
+        financial_keys = [k for k in stmt if k not in ("period", "period_type")]
+        if any(stmt[k] is not None for k in financial_keys):
+            out.append(stmt)
+    return out
+
+
+def fetch_cashflow(ticker: str) -> list[dict]:
+    """Annual cash flow statements via Yahoo Finance timeseries API. Newest first."""
+    types = [
+        "annualOperatingCashFlow",
+        "annualCapitalExpenditure",
+        "annualInvestingCashFlow",
+        "annualFinancingCashFlow",
+        "annualFreeCashFlow",
+        "annualChangesInCash",      # true net change in cash balance
+    ]
+    by_period = _fetch_timeseries(ticker, types)
+    out = []
+    for date, vals in by_period.items():
+        stmt = {
+            "period": date,
+            "period_type": "annual",
+            "operating_cashflow": vals.get("annualOperatingCashFlow"),
+            "capex": vals.get("annualCapitalExpenditure"),
+            "investing_cashflow": vals.get("annualInvestingCashFlow"),
+            "financing_cashflow": vals.get("annualFinancingCashFlow"),
+            "free_cashflow": vals.get("annualFreeCashFlow"),
+            "net_change_in_cash": vals.get("annualChangesInCash"),
+        }
+        financial_keys = [k for k in stmt if k not in ("period", "period_type")]
+        if any(stmt[k] is not None for k in financial_keys):
+            out.append(stmt)
+    return out
 
 
 # ── Sector ETF performance ─────────────────────────────────────────────────

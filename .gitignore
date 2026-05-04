@@ -56,8 +56,8 @@ logs/
 # ── Docker ────────────────────────────────────────────────────────────────────
 .docker/
 
-# ── Eval outputs ──────────────────────────────────────────────────────────────
-backend/data/eval_results/*.json
+# ── Eval outputs (keep for demo — RAGAS results showcased) ───────────────────
+# backend/data/eval_results/*.json
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 *.pem

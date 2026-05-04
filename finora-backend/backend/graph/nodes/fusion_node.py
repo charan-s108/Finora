@@ -26,20 +26,75 @@ def _currency_sym(currency: str) -> str:
     return "₹" if currency == "INR" else "$"
 
 
-def _fmt_realtime(rt: dict | None, currency: str = "USD") -> str:
+def _query_period(query: str) -> tuple[str, int]:
+    """
+    Parse the timeframe the user is asking about.
+    Returns (label, trading_days_lookback).
+    trading_days_lookback == -1 → use daily pct_change directly from API.
+    """
+    q = query.lower()
+    if any(x in q for x in ("5y", "5 year", "five year")):
+        return "5Y", 1250
+    if any(x in q for x in ("3y", "3 year", "three year")):
+        return "3Y", 750
+    if any(x in q for x in ("1y", "1 year", "one year", "past year", "this year", "ytd", "annual")):
+        return "1Y", 252
+    if any(x in q for x in ("6m", "6 month", "six month", "half year")):
+        return "6M", 126
+    if any(x in q for x in ("3m", "3 month", "three month", "quarter", "quarterly")):
+        return "3M", 63
+    if any(x in q for x in ("1m", "month", "30 day", "past month", "this month")):
+        return "1M", 21
+    if any(x in q for x in ("week", "7 day", "5 day", "this week", "past week")):
+        return "1W", 5
+    return "1D", -1
+
+
+def _period_return(rt: dict, query: str) -> tuple[str, float | None]:
+    """
+    Compute return for the query's timeframe from monthly bars already in realtime_context.
+    monthly bars = 30 trading days — covers 1D / 1W / 1M accurately.
+    Longer periods fall back to daily pct_change.
+    """
+    label, days = _query_period(query)
+    if days == -1:
+        return label, rt.get("pct_change")
+    monthly = rt.get("monthly") or []
+    closes = [b["close"] for b in monthly if b.get("close")]
+    if len(closes) < 2:
+        return label, rt.get("pct_change")
+    last = closes[-1]
+    idx = max(0, len(closes) - days)
+    ref = closes[idx]
+    if ref:
+        return label, round((last - ref) / ref * 100, 2)
+    return label, rt.get("pct_change")
+
+
+def _fmt_realtime(rt: dict | None, currency: str = "USD", query: str = "") -> str:
     if not rt or not rt.get("price"):
         return "[REAL-TIME DATA UNAVAILABLE]"
     sym = _currency_sym(currency)
     ticker = rt.get("ticker", "")
     price = rt.get("price")
     change = rt.get("change")
-    pct = rt.get("pct_change")
     vol = rt.get("volume")
     avg_vol = rt.get("avg_volume_30d")
     vol_ratio = round(vol / avg_vol, 1) if vol and avg_vol else None
 
-    lines = [f"{ticker}: {sym}{price:.2f} ({pct:+.2f}%)" if price and pct else f"{ticker}: {sym}{price}"]
-    if change:
+    period_label, period_pct = _period_return(rt, query) if query else ("1D", rt.get("pct_change"))
+    daily_pct = rt.get("pct_change")
+
+    if period_pct is not None:
+        lines = [f"{ticker}: {sym}{price:.2f} ({period_pct:+.2f}% {period_label})"]
+    else:
+        lines = [f"{ticker}: {sym}{price:.2f}"]
+
+    # When showing a multi-day period, also include today's daily return for context
+    if period_label != "1D" and daily_pct is not None:
+        lines.append(f"Today: {daily_pct:+.2f}% | {period_label} return: {period_pct:+.2f}%")
+
+    if change and period_label == "1D":
         lines.append(f"Change: {sym}{change:+.4f}")
     if vol_ratio is not None:
         lines.append(f"Volume: {vol:,} ({vol_ratio}x 30d avg)")
@@ -126,6 +181,91 @@ def _fmt_sector_context(sc: dict | None, currency: str = "USD") -> str:
     return "\n".join(lines)
 
 
+def _fmt_balance_history(fd: dict | None, currency: str = "USD") -> str:
+    if not fd:
+        return ""
+    rows: list[dict] = fd.get("annual_balance") or []
+    if not rows:
+        return ""
+    sym = _currency_sym(currency)
+
+    def _b(val: float | None) -> str:
+        if val is None:
+            return "N/A"
+        return f"{sym}{val / 1e9:.1f}B"
+
+    lines = [f"[ANNUAL BALANCE SHEET HISTORY — {len(rows)} fiscal years]"]
+    for r in rows[:5]:
+        period = r.get("period", "")
+        fy = period[:4] if period else "?"
+        ta = _b(r.get("total_assets"))
+        tl = _b(r.get("total_liabilities"))
+        eq = _b(r.get("total_equity"))
+        debt = _b(r.get("long_term_debt"))
+        cash = _b(r.get("cash"))
+        lines.append(
+            f"FY{fy} ({period}): Total Assets {ta} | Total Liabilities {tl} | "
+            f"Equity {eq} | LT Debt {debt} | Cash {cash}"
+        )
+    return "\n".join(lines)
+
+
+def _fmt_cashflow_history(fd: dict | None, currency: str = "USD") -> str:
+    if not fd:
+        return ""
+    rows: list[dict] = fd.get("annual_cashflow") or []
+    if not rows:
+        return ""
+    sym = _currency_sym(currency)
+
+    def _b(val: float | None) -> str:
+        if val is None:
+            return "N/A"
+        return f"{sym}{val / 1e9:.1f}B"
+
+    lines = [f"[ANNUAL CASH FLOW HISTORY — {len(rows)} fiscal years]"]
+    for r in rows[:5]:
+        period = r.get("period", "")
+        fy = period[:4] if period else "?"
+        ocf = _b(r.get("operating_cashflow"))
+        fcf = _b(r.get("free_cashflow"))
+        net = _b(r.get("net_change_in_cash"))
+        capex = _b(r.get("capex"))
+        lines.append(
+            f"FY{fy} ({period}): Operating CF {ocf} | Free CF {fcf} | "
+            f"Net Change in Cash {net} | Capex {capex}"
+        )
+    return "\n".join(lines)
+
+
+def _fmt_income_history(fd: dict | None, currency: str = "USD") -> str:
+    if not fd:
+        return ""
+    rows: list[dict] = fd.get("annual_income") or []
+    if not rows:
+        return ""
+    sym = _currency_sym(currency)
+
+    def _b(val: float | None) -> str:
+        if val is None:
+            return "N/A"
+        return f"{sym}{val / 1e9:.1f}B"
+
+    lines = [f"[ANNUAL INCOME HISTORY — {len(rows)} fiscal years]"]
+    for r in rows[:5]:
+        period = r.get("period", "")
+        fy = period[:4] if period else "?"
+        rev = _b(r.get("revenue"))
+        ni = _b(r.get("net_income"))
+        gp = _b(r.get("gross_profit"))
+        oi = _b(r.get("operating_income"))
+        lines.append(
+            f"FY{fy} ({period}): Revenue {rev} | Net Income {ni} | "
+            f"Gross Profit {gp} | Operating Income {oi}"
+        )
+    return "\n".join(lines)
+
+
 def _fmt_fundamentals(fd: dict | None, currency: str = "USD") -> str:
     if not fd:
         return "[FUNDAMENTAL DATA UNAVAILABLE]"
@@ -165,7 +305,7 @@ def _fmt_fundamentals(fd: dict | None, currency: str = "USD") -> str:
 
 def _fmt_filings(chunks: list[dict]) -> str:
     if not chunks:
-        return "[NO FILINGS DATA]"
+        return ""  # Silent — no noise for Indian stocks that have no SEC filings
 
     lines = [f"[FILINGS CONTEXT — {len(chunks)} excerpts]"]
 
@@ -176,6 +316,22 @@ def _fmt_filings(chunks: list[dict]) -> str:
 
         lines.append(f"[{i}] {form} ({period}): {text}")
 
+    return "\n".join(lines)
+
+
+_MAX_FINANCIALS_CHUNKS = int(os.getenv("RAG_MAX_FINANCIALS_CHUNKS", "3"))
+
+
+def _fmt_financials(chunks: list[dict]) -> str:
+    if not chunks:
+        return ""  # Silent — no noise for non-financial queries
+    n = min(len(chunks), _MAX_FINANCIALS_CHUNKS)
+    lines = [f"[FINANCIAL STATEMENTS — {n} periods]"]
+    for i, ch in enumerate(chunks[:_MAX_FINANCIALS_CHUNKS], 1):
+        period = ch.get("period_label", ch.get("period", ""))
+        stmt_type = ch.get("statement_type", "")
+        text = ch.get("text", "")[:500]
+        lines.append(f"[{i}] {stmt_type.upper()} {period}: {text}")
     return "\n".join(lines)
 
 
@@ -366,10 +522,10 @@ def _compute_confidence_level(state: FiNoraState) -> str:
         strong_signals += 1
 
     has_news = bool(state.get("news_chunks"))
-    has_filings = bool(state.get("filings_chunks"))
+    has_financials = bool(state.get("financials_chunks"))
     has_historical = bool(state.get("historical_chunks"))
     has_fundamentals = bool(fd)
-    data_sources = sum([bool(rt), has_news, has_filings, has_historical, has_fundamentals])
+    data_sources = sum([bool(rt), has_news, has_financials, has_historical, has_fundamentals])
 
     if strong_signals >= 3 and data_sources >= 3:
         return "high"
@@ -462,18 +618,21 @@ def _compute_confidence(state: FiNoraState) -> float:
         score += 0.3
     if state.get("news_chunks"):
         score += 0.3
-    if state.get("filings_chunks"):
-        score += 0.35
+    if state.get("financials_chunks"):
+        score += 0.3  # reliable for all stocks (US + Indian)
     if state.get("historical_chunks"):
         score += 0.25
     if state.get("fundamental_data"):
         score += 0.15
+    if state.get("filings_chunks"):
+        score += 0.1  # bonus when SEC filings available (US only)
     return min(round(score, 2), 1.0)
 
 
 def _build_data_context(state: FiNoraState) -> str:
     """Pure data context — no behavioral instructions. Used as the user message."""
     ticker = state.get("ticker", "")
+    query = state.get("query", "")
     company_name = state.get("company_name") or ticker
     currency = state.get("currency") or "USD"
     history = state.get("conversation_history", [])
@@ -487,9 +646,10 @@ def _build_data_context(state: FiNoraState) -> str:
     has_conflict, conflict_reason = _compute_conflict(state)
     uncertainty_flag = confidence_level == "low" or (has_conflict and confidence_level != "high")
 
-    rt_section = _fmt_realtime(rt, currency)
+    rt_section = _fmt_realtime(rt, currency, query)
     news_section = _fmt_chunks(state.get("news_chunks", []), "NEWS")
     filings_section = _fmt_filings(state.get("filings_chunks", []))
+    financials_section = _fmt_financials(state.get("financials_chunks", []))
 
     # Historical: prefer deep RAG chunks (historical_rag_node) when intent fired,
     # otherwise use always-available patterns fetched alongside realtime data
@@ -502,6 +662,9 @@ def _build_data_context(state: FiNoraState) -> str:
         hist_section = _fmt_historical_patterns(rt_patterns)
 
     fund_section = _fmt_fundamentals(fd, currency)
+    income_history_section = _fmt_income_history(fd, currency)
+    cashflow_history_section = _fmt_cashflow_history(fd, currency)
+    balance_history_section = _fmt_balance_history(fd, currency)
     sector_section = _fmt_sector_context(state.get("sector_context"), currency)
 
     flags_text = "\n".join(f"- {f}" for f in insight_flags[:4]) if insight_flags else "No significant flags."
@@ -571,10 +734,13 @@ def _build_data_context(state: FiNoraState) -> str:
 
 [FUNDAMENTALS]
 {fund_section}
-
+{chr(10) + income_history_section if income_history_section else ""}
+{chr(10) + cashflow_history_section if cashflow_history_section else ""}
+{chr(10) + balance_history_section if balance_history_section else ""}
 {news_section}
 
-{filings_section}
+{financials_section if financials_section else ""}
+{filings_section if filings_section else ""}
 
 {hist_section}
 {chr(10) + sector_section if sector_section else ""}"""
@@ -610,6 +776,32 @@ def fusion_node(state: FiNoraState) -> dict:
                 "source": ch.get("source", ""),
                 "time": ch.get("published_at", ""),
             })
+
+    # Filings citations — construct EDGAR URL from chunk metadata
+    seen_accessions: set[str] = set()
+    for ch in (state.get("filings_chunks") or [])[:3]:
+        cik = ch.get("cik", "")
+        accession = ch.get("accession", "")
+        if not cik or not accession or accession in seen_accessions:
+            continue
+        seen_accessions.add(accession)
+        filing_type = ch.get("filing_type", "Filing")
+        period = ch.get("period", "")
+        section_label = ch.get("section_label", "")
+        ch_ticker = ch.get("ticker", ticker)
+        try:
+            edgar_url = (
+                f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/"
+            )
+        except (ValueError, TypeError):
+            continue
+        label = section_label or filing_type
+        citations.append({
+            "url": edgar_url,
+            "title": f"{ch_ticker} {filing_type} – {label}",
+            "source": "SEC EDGAR",
+            "time": period[:7] if period else "",
+        })
 
     log.info(
         "fusion_done",

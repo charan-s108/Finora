@@ -36,6 +36,39 @@ export const HistoricalSignalSchema = z.object({
   return_pct: z.number().nullable().optional(),
 });
 
+export const FinancialPeriodSchema = z.object({
+  period: z.string(),
+  period_type: z.string(),
+  revenue: z.number().nullable().optional(),
+  net_income: z.number().nullable().optional(),
+  revenue_growth_pct: z.number().nullable().optional(),
+  profit_growth_pct: z.number().nullable().optional(),
+});
+export type FinancialPeriod = z.infer<typeof FinancialPeriodSchema>;
+
+export const FinancialPerformanceSchema = z.object({
+  currency: z.string(),
+  currency_unit: z.string(),
+  annual: z.array(FinancialPeriodSchema),
+  quarterly: z.array(FinancialPeriodSchema),
+  revenue_1y_growth: z.number().nullable().optional(),
+  profit_1y_growth: z.number().nullable().optional(),
+  revenue_3y_cagr: z.number().nullable().optional(),
+  profit_3y_cagr: z.number().nullable().optional(),
+});
+export type FinancialPerformance = z.infer<typeof FinancialPerformanceSchema>;
+
+export const FinancialsDetailSchema = z.object({
+  ticker: z.string(),
+  currency: z.string(),
+  currency_unit: z.string(),
+  income_annual: z.array(z.record(z.unknown())),
+  income_quarterly: z.array(z.record(z.unknown())),
+  balance_sheet: z.array(z.record(z.unknown())),
+  cashflow: z.array(z.record(z.unknown())),
+});
+export type FinancialsDetail = z.infer<typeof FinancialsDetailSchema>;
+
 export const StockDetailSchema = z.object({
   ticker: z.string(),
   name: z.string().nullable().optional(),
@@ -78,7 +111,9 @@ export const StockDetailSchema = z.object({
     sector: z.string(),
     exchange: z.string(),
     currency: z.string(),
+    website: z.string().nullable().optional(),
   })).optional(),
+  financial_performance: FinancialPerformanceSchema.nullable().optional(),
 });
 export type StockDetail = z.infer<typeof StockDetailSchema>;
 
@@ -125,6 +160,18 @@ export async function getOHLCV(ticker: string, range: OHLCVTimeframe = "1M"): Pr
   if (!res.ok) return [];
   const data = await res.json();
   return z.array(OHLCVBarSchema).parse(data.bars ?? []);
+}
+
+export async function getFinancials(ticker: string): Promise<FinancialsDetail | null> {
+  try {
+    const res = await fetch(`${BACKEND}/api/stocks/${encodeURIComponent(ticker)}/financials`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return FinancialsDetailSchema.parse(await res.json());
+  } catch {
+    return null;
+  }
 }
 
 export async function getSectors(): Promise<SectorData[]> {

@@ -24,19 +24,35 @@ _TOP_K = 5
 
 def _rewrite_query(query: str) -> str:
     """
-    Light steering → forces retrieval toward high-value sections
-    without breaking user intent.
+    Section-aware steering — appends terms that match the section the query targets.
+    Generic MDA bias was causing risk-factor queries to retrieve MDA chunks.
     """
-    return (
-        f"{query} "
-        "management discussion analysis risks growth strategy revenue margins guidance"
-    )
+    q = query.lower()
+    if any(w in q for w in ("risk", "threat", "challenge", "exposure", "concern", "lawsuit", "regulatory", "litigation")):
+        extra = "risk factors threats regulatory legal competitive exposure uncertainty"
+    elif any(w in q for w in ("revenue", "profit", "margin", "earnings", "income", "sales", "guidance", "growth")):
+        extra = "management discussion analysis revenue profit margins guidance outlook"
+    elif any(w in q for w in ("business", "product", "service", "segment", "market", "competition", "strategy")):
+        extra = "business description products services market segments competitive strategy"
+    elif any(w in q for w in ("quantitative", "market risk", "interest rate", "forex", "hedg")):
+        extra = "quantitative disclosures market risk interest rate currency hedging"
+    else:
+        extra = "management discussion analysis risk factors strategy revenue guidance"
+    return f"{query} {extra}"
 
 
 async def filings_rag_node(state: FiNoraState) -> dict:
     """
     SEC filings retrieval for stock-level context.
+    SEC EDGAR is US-only — skip Indian tickers entirely.
     """
+
+    yf_ticker = state.get("yf_ticker", "")
+    if yf_ticker.endswith((".NS", ".BO")):
+        return {
+            "filings_chunks": [],
+            "retrieval_scores": {**state.get("retrieval_scores", {}), "filings": {}},
+        }
 
     query = state["query"]
     ticker = state.get("ticker", "")

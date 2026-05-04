@@ -5,6 +5,7 @@ import { useState } from "react";
 interface Props {
   website?: string | null;
   ticker: string;
+  exchange?: string | null;
   size?: number;
   className?: string;
 }
@@ -33,19 +34,31 @@ function tickerColor(ticker: string): string {
   return colors[idx];
 }
 
-type Source = "fmp" | "clearbit" | "google" | "fallback";
+// Source priority chain:
+// US stocks:     fmp → clearbit (domain) → tv → google (domain) → fallback
+// Indian stocks: tv  → clearbit (domain) → google (domain)      → fallback
+type Source = "fmp" | "tv" | "clearbit" | "google" | "fallback";
 
-export function StockLogo({ website, ticker, size = 48, className = "" }: Props) {
-  const [source, setSource] = useState<Source>("fmp");
+const FMP_UNSUPPORTED = new Set(["NSE", "BSE"]);
 
+function initialSource(domain: string | null, exchange: string | null | undefined): Source {
+  if (exchange && FMP_UNSUPPORTED.has(exchange.toUpperCase())) return "tv";
+  if (domain?.endsWith(".in")) return "tv";
+  return "fmp";
+}
+
+export function StockLogo({ website, ticker, exchange, size = 48, className = "" }: Props) {
   const domain = domainFromUrl(website);
+  const [source, setSource] = useState<Source>(() => initialSource(domain, exchange));
+
   const clean = cleanTicker(ticker);
   const initials = clean.slice(0, 2).toUpperCase();
   const fontSize = size <= 24 ? "text-[9px]" : size <= 36 ? "text-xs" : "text-sm";
   const style = { width: size, height: size, minWidth: size };
 
   const nextSource = (): Source => {
-    if (source === "fmp") return domain ? "clearbit" : "google";
+    if (source === "fmp") return domain ? "clearbit" : "tv";
+    if (source === "tv") return domain ? "clearbit" : "fallback";
     if (source === "clearbit") return domain ? "google" : "fallback";
     if (source === "google") return "fallback";
     return "fallback";
@@ -54,10 +67,12 @@ export function StockLogo({ website, ticker, size = 48, className = "" }: Props)
   const src: string | null =
     source === "fmp"
       ? `https://financialmodelingprep.com/image-stock/${clean}.png`
+      : source === "tv"
+      ? `https://s3-symbol-logo.tradingview.com/${clean.toLowerCase()}--big.svg`
       : source === "clearbit" && domain
       ? `https://logo.clearbit.com/${domain}`
       : source === "google" && domain
-      ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+      ? `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=64`
       : null;
 
   if (source === "fallback" || !src) {
