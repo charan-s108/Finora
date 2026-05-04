@@ -27,18 +27,28 @@ async def financials_rag_node(state: FiNoraState) -> dict:
     """
     Retrieve pre-ingested financial statement chunks from Qdrant finora_financials.
     Works for ALL stocks (US + Indian) — no ticker skip needed.
+    Silently returns empty if the collection doesn't exist yet (not ingested).
     """
     query = state["query"]
     ticker = state.get("ticker", "")
 
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None,
-        run_rag_branch,
-        query,
-        ticker,
-        _BRANCH,
-    )
+    _empty = {
+        "financials_chunks": [],
+        "retrieval_scores": {**state.get("retrieval_scores", {}), "financials": {}},
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            run_rag_branch,
+            query,
+            ticker,
+            _BRANCH,
+        )
+    except Exception as exc:
+        log.warning("financials_rag_failed", ticker=ticker, error=str(exc))
+        return _empty
 
     chunks = [
         {

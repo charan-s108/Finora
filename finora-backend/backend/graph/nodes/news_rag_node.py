@@ -39,12 +39,22 @@ async def news_rag_node(state: FiNoraState) -> dict:
     live_task = loop.run_in_executor(None, fetch_news, yf_ticker or ticker, _LIVE_COUNT)
     rag_task = loop.run_in_executor(None, run_rag_branch, query, ticker, _BRANCH)
 
-    live_news, result = await asyncio.gather(live_task, rag_task)
+    # return_exceptions=True: Qdrant RAG failure must not cancel the live RSS task
+    live_news_raw, rag_result = await asyncio.gather(live_task, rag_task, return_exceptions=True)
+
+    if isinstance(live_news_raw, Exception):
+        log.warning("news_live_rss_failed", ticker=ticker, error=str(live_news_raw))
+        live_news_raw = []
+    live_news: list[dict] = live_news_raw  # type: ignore[assignment]
+
+    if isinstance(rag_result, Exception):
+        log.warning("news_qdrant_rag_failed", ticker=ticker, error=str(rag_result))
+        rag_result = None
 
     # Qdrant chunks — supplementary historical/older context
     qdrant_chunks = [
         {"text": ch.text, "score": ch.score, **ch.metadata}
-        for ch in result.chunks
+        for ch in (rag_result.chunks if rag_result else [])
     ]
 
     # Deduplicate: drop Qdrant chunks whose title appears in live headlines
@@ -58,7 +68,7 @@ async def news_rag_node(state: FiNoraState) -> dict:
     # Qdrant supplementary second
     chunks = list(live_news) + qdrant_chunks
 
-    scores = result.retrieval_scores
+    scores = rag_result.retrieval_scores if rag_result else {}
     log.info(
         "news_rag_done",
         ticker=ticker,

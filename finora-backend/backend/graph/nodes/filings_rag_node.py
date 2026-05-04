@@ -59,14 +59,23 @@ async def filings_rag_node(state: FiNoraState) -> dict:
 
     rewritten_query = _rewrite_query(query)
 
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None,
-        run_rag_branch,
-        rewritten_query,
-        ticker,
-        _BRANCH,
-    )
+    _empty = {
+        "filings_chunks": [],
+        "retrieval_scores": {**state.get("retrieval_scores", {}), "filings": {}},
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            run_rag_branch,
+            rewritten_query,
+            ticker,
+            _BRANCH,
+        )
+    except Exception as exc:
+        log.warning("filings_rag_failed", ticker=ticker, error=str(exc))
+        return _empty
 
     chunks = [
         {
